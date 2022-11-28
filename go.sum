@@ -1,0 +1,16 @@
+github.com/ClickerMonkey/deps v0.1.2 h1:X3ird6BwRMxcK9h0ckWcH8fdCy1Htto9yUIzJGiaYqk=
+github.com/ClickerMonkey/deps v0.1.2/go.mod h1:fDC1q7RO9JROmWZuYQceMNl14nnvT63hnXpft0xI9lE=
+github.com/ClickerMonkey/deps v0.2.0 h1:5DHSRCd13QWR3ovp3YX6M/LZUpM/VvqZTHatfU+rm+k=
+github.com/ClickerMonkey/deps v0.2.0/go.mod h1:fDC1q7RO9JROmWZuYQceMNl14nnvT63hnXpft0xI9lE=
+github.com/ClickerMonkey/deps v0.3.0 h1:NEOtrWzESyL5HZRUBwmVifF80mCMDoDnbgFDxo3TIso=
+github.com/ClickerMonkey/deps v0.3.0/go.mod h1:fDC1q7RO9JROmWZuYQceMNl14nnvT63hnXpft0xI9lE=
+github.com/ClickerMonkey/deps v0.4.0 h1:0TWH4oS0WDwlWVhub/RFCAMWNTkcPUiT6PhBtlVaycw=
+github.com/ClickerMonkey/deps v0.4.0/go.mod h1:fDC1q7RO9JROmWZuYQceMNl14nnvT63hnXpft0xI9lE=
+github.com/ClickerMonkey/deps v0.4.1 h1:FPwYCkwu5QRwX1eIUN6kiVbwJwCjQexjyDcNAdCEq9k=
+github.com/ClickerMonkey/deps v0.4.1/go.mod h1:fDC1q7RO9JROmWZuYQceMNl14nnvT63hnXpft0xI9lE=
+github.com/ClickerMonkey/deps v0.4.2 h1:VvmMa3p0Sv9Q6/K5u4A713KaJC4jbVdatKinqRiOSpA=
+github.com/ClickerMonkey/deps v0.4.2/go.mod h1:fDC1q7RO9JROmWZuYQceMNl14nnvT63hnXpft0xI9lE=
+github.com/ClickerMonkey/deps v0.4.3 h1:RnN53bsr3PkOUUwRumTj/xIX+8OFxuJY7Crb6AH1Y0E=
+github.com/ClickerMonkey/deps v0.4.3/go.mod h1:fDC1q7RO9JROmWZuYQceMNl14nnvT63hnXpft0xI9lE=
+github.com/go-chi/chi/v5 v5.0.7 h1:rDTPXLDHGATaeHvVlLcR4Qe0zftYethFucbjVQ1PxU8=
+github.com/go-chi/chi/v5 v5.0.7/go.mod h1:DslCQbL2OYiznFReuXYUmQ2hGd1aDpCnlMNITLSKoi8=
