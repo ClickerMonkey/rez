@@ -70,27 +70,15 @@ func main() {
 
 	site.Route("/task", func(r rez.Router) {
 		r.Use(authMiddleware)
-		r.UpdateOperations(api.Operation{
-			Tags: []string{"Task"},
-		})
-		r.UpdatePath("/{id}", api.Path{
-			Summary: "Operations on a specific task",
-		})
+		r.UpdateOperations(api.Operation{Tags: []string{"Task"}})
+		r.UpdatePath("/{id}", api.Path{Summary: "Operations on a specific task"})
 
-		r.Get("/{id}", getTask, api.Operation{
-			Summary: "Get task by id",
-		})
-		r.Delete("/{id}", deleteTask, api.Operation{
-			Summary: "Delete task by id",
-		})
+		r.Get("/{id}", getTask, api.Operation{Summary: "Get task by id"})
+		r.Delete("/{id}", deleteTask, api.Operation{Summary: "Delete task by id"})
 	})
 	site.Group(func(r rez.Router) {
-		r.UpdateOperations(api.Operation{
-			Tags: []string{"Authentication"},
-		})
-		r.UpdatePath("/auth", api.Path{
-			Summary: "Operations for authentication",
-		})
+		r.UpdateOperations(api.Operation{Tags: []string{"Authentication"}})
+		r.UpdatePath("/auth", api.Path{Summary: "Operations for authentication"})
 
 		r.Post("/auth", authLogin, api.Operation{Summary: "Login"})
 		r.With(authMiddleware).Get("/auth", authGet, api.Operation{Summary: "Get current session"})
