@@ -96,7 +96,7 @@ type Auth struct { Token string }
 
 type AuthMiddleware func(s *deps.Scope, next rez.MiddlewareNext, q rez.Query[Auth]) *rez.Unauthorized[string]
 // All routes which use this middleware accept this type of security
-func (auth AuthMiddleware) APIOperationUpdate(op *Operation) {
+func (auth AuthMiddleware) APIOperationUpdate(op *api.Operation) {
   op.Security = append(op.Security, map[string][]string{"queryAuth": {}})
 }
 
