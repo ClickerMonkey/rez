@@ -12,6 +12,8 @@ github.com/ClickerMonkey/deps v0.4.2 h1:VvmMa3p0Sv9Q6/K5u4A713KaJC4jbVdatKinqRiO
 github.com/ClickerMonkey/deps v0.4.2/go.mod h1:fDC1q7RO9JROmWZuYQceMNl14nnvT63hnXpft0xI9lE=
 github.com/ClickerMonkey/deps v0.4.3 h1:RnN53bsr3PkOUUwRumTj/xIX+8OFxuJY7Crb6AH1Y0E=
 github.com/ClickerMonkey/deps v0.4.3/go.mod h1:fDC1q7RO9JROmWZuYQceMNl14nnvT63hnXpft0xI9lE=
+github.com/ClickerMonkey/deps v0.4.4 h1:7ARQA7Ab8pnjm5zQONO2uO7mfIXO4UV6Y//nMVrdNZo=
+github.com/ClickerMonkey/deps v0.4.4/go.mod h1:fDC1q7RO9JROmWZuYQceMNl14nnvT63hnXpft0xI9lE=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

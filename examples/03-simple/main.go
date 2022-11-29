@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"regexp"
 	"time"
 
@@ -10,9 +11,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-type Headers struct {
-	Authorization string
-}
 type TaskParams struct {
 	ID int `json:"id"`
 }
@@ -35,14 +33,17 @@ func (r AuthRequest) APIDescription() string {
 }
 
 type JWT string
-type AuthError struct{}
-
-func (err AuthError) Error() string       { return "AuthError" }
-func (err AuthError) HTTPStatus() int     { return 403 }
-func (err AuthError) HTTPStatuses() []int { return []int{403} }
 
 func main() {
 	site := rez.New(chi.NewRouter())
+	site.Open.AddSecurity("bearer", &api.Security{
+		Type:         api.SecurityTypeHTTP,
+		Description:  "Authentication with a 'Bearer {token}' in the Authorization header.",
+		Name:         "Authorization",
+		In:           api.ParameterInHeader,
+		Scheme:       "bearer",
+		BearerFormat: "JWT",
+	})
 	site.Open.AddTag(api.Tag{
 		Name:        "Task",
 		Description: "A collection of task related operations",
@@ -57,14 +58,11 @@ func main() {
 		Format:      "date-time",
 	})
 
-	site.DefineParam(TaskParams{})
-	site.DefineBody(AuthRequest{})
-	site.DefineHeader(Headers{})
-
 	site.Route("/task", func(r rez.Router) {
 		r.Use(authMiddleware)
 		r.UpdatePath("/{id}", api.Path{Summary: "Operations on a specific task"})
 		r.UpdateOperations(api.Operation{Tags: []string{"Task"}})
+		r.DefineParam(TaskParams{})
 
 		r.Get("/{id}", getTask, api.Operation{Summary: "Get task by id"})
 		r.Delete("/{id}", deleteTask, api.Operation{Summary: "Delete task by id"})
@@ -72,12 +70,14 @@ func main() {
 	site.Group(func(r rez.Router) {
 		r.UpdatePath("/auth", api.Path{Summary: "Operations for authentication"})
 		r.UpdateOperations(api.Operation{Tags: []string{"Authentication"}})
+		r.DefineBody(AuthRequest{})
 
 		r.Post("/auth", authLogin, api.Operation{Summary: "Login"})
 		r.With(authMiddleware).Get("/auth", authGet, api.Operation{Summary: "Get current session"})
 		r.Delete("/auth", authLogout, api.Operation{Summary: "Logout"})
 	})
 
+	site.PrintPaths()
 	site.ServeSwaggerUI("/doc/swagger", nil)
 	site.ServeRedoc("/doc/redoc")
 	site.Listen(":3000")
@@ -104,12 +104,23 @@ func authGet(token JWT) (*AuthResult, *rez.Unauthorized[string]) {
 func authLogout() (*rez.OK[string], *rez.Unauthorized[string]) {
 	return &rez.OK[string]{Result: "OK"}, nil
 }
-func authMiddleware(headers Headers, scope *deps.Scope, router rez.Router, next rez.MiddlewareNext) *rez.Unauthorized[string] {
+
+// Middleware which also updates the operations it's applied to.
+
+type AuthMiddleware func(r *http.Request, scope *deps.Scope, router rez.Router, next rez.MiddlewareNext) *rez.Unauthorized[string]
+
+var _ api.HasOperationUpdate = AuthMiddleware(nil)
+
+func (am AuthMiddleware) APIOperationUpdate(op *api.Operation) {
+	op.Security = append(op.Security, map[string][]string{"bearer": {}})
+}
+
+var authMiddleware AuthMiddleware = func(r *http.Request, scope *deps.Scope, router rez.Router, next rez.MiddlewareNext) *rez.Unauthorized[string] {
 	bearer, err := regexp.Compile(`^[Bb]earer (.+)$`)
 	if err != nil {
 		return &rez.Unauthorized[string]{}
 	}
-	matches := bearer.FindStringSubmatch(headers.Authorization)
+	matches := bearer.FindStringSubmatch(r.Header.Get("Authorization"))
 	if len(matches) < 2 {
 		return &rez.Unauthorized[string]{}
 	}

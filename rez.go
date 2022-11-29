@@ -8,9 +8,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// The middleware type alias
-type Middleware = func(http.Handler) http.Handler
-
 // A function which handles the error and returns true or returns false for the error to be handled by default behavior.
 type ErrorHandler = func(err error, response http.ResponseWriter, request *http.Request, scope *deps.Scope) bool
 
@@ -88,7 +85,7 @@ type Router interface {
 	// Adds the tags for all child routes starting at this router
 	AddTags(tags []string)
 
-	// Sets the tags for all child routes starting at this router
+	// Sets the responses for all child routes starting at this router
 	// This is similar to router.SetOperation(api.Operation{Responses: responses}).
 	SetResponses(responses api.Responses)
 

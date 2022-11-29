@@ -29,8 +29,10 @@ type RequestTypes struct {
 
 // A type which has one or more injectable request types. This is how the dependency injected functions
 // are inspected for types which are added to the Open API document.
-type HasRequestTypes interface {
-	GetRequestTypes() RequestTypes
+type Injectable interface {
+	deps.Dynamic
+
+	APIRequestTypes() RequestTypes
 }
 
 // A function parameter that is injected with path parameters.
@@ -38,10 +40,9 @@ type Param[P any] struct {
 	Value P
 }
 
-var _ deps.Dynamic = &Param[int]{}
-var _ HasRequestTypes = &Param[int]{}
+var _ Injectable = &Param[int]{}
 
-func (p Param[P]) GetRequestTypes() RequestTypes {
+func (p Param[P]) APIRequestTypes() RequestTypes {
 	return RequestTypes{Param: deps.TypeOf[P]()}
 }
 func (r *Param[P]) ProvideDynamic(scope *deps.Scope) error {
@@ -54,10 +55,9 @@ type Query[Q any] struct {
 	Value Q
 }
 
-var _ deps.Dynamic = &Query[int]{}
-var _ HasRequestTypes = &Query[int]{}
+var _ Injectable = &Query[int]{}
 
-func (q Query[Q]) GetRequestTypes() RequestTypes {
+func (q Query[Q]) APIRequestTypes() RequestTypes {
 	return RequestTypes{Query: deps.TypeOf[Q]()}
 }
 func (r *Query[Q]) ProvideDynamic(scope *deps.Scope) error {
@@ -70,10 +70,9 @@ type Body[B any] struct {
 	Value B
 }
 
-var _ deps.Dynamic = &Body[int]{}
-var _ HasRequestTypes = &Body[int]{}
+var _ Injectable = &Body[int]{}
 
-func (b Body[B]) GetRequestTypes() RequestTypes {
+func (b Body[B]) APIRequestTypes() RequestTypes {
 	return RequestTypes{Body: deps.TypeOf[B]()}
 }
 func (b *Body[B]) ProvideDynamic(scope *deps.Scope) error {
@@ -88,10 +87,9 @@ type Request[B any, P any, Q any] struct {
 	Query Q
 }
 
-var _ deps.Dynamic = &Request[int, int, int]{}
-var _ HasRequestTypes = &Request[int, int, int]{}
+var _ Injectable = &Request[int, int, int]{}
 
-func (r Request[B, P, Q]) GetRequestTypes() RequestTypes {
+func (r Request[B, P, Q]) APIRequestTypes() RequestTypes {
 	return RequestTypes{Body: deps.TypeOf[B](), Param: deps.TypeOf[P](), Query: deps.TypeOf[Q]()}
 }
 func (r *Request[B, P, Q]) ProvideDynamic(scope *deps.Scope) error {
@@ -116,10 +114,9 @@ type Header[H any] struct {
 	Value H
 }
 
-var _ deps.Dynamic = &Header[int]{}
-var _ HasRequestTypes = &Header[int]{}
+var _ Injectable = &Header[int]{}
 
-func (h Header[H]) GetRequestTypes() RequestTypes {
+func (h Header[H]) APIRequestTypes() RequestTypes {
 	return RequestTypes{Header: deps.TypeOf[H]()}
 }
 func (r *Header[H]) ProvideDynamic(scope *deps.Scope) error {

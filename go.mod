@@ -4,7 +4,7 @@ go 1.19
 
 require github.com/go-chi/chi/v5 v5.0.7
 
-require github.com/ClickerMonkey/deps v0.4.3
+require github.com/ClickerMonkey/deps v0.4.4
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect

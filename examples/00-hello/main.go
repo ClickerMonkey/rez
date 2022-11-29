@@ -16,6 +16,7 @@ func main() {
 		return MessageResult{Message: "Hello World"}
 	})
 
+	site.PrintPaths()
 	site.ServeSwaggerUI("/doc/swagger", nil)
 	site.ServeRedoc("/doc/redoc")
 	site.Listen(":3000")

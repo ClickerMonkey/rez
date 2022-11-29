@@ -244,7 +244,7 @@ func (site *Site) Route(pattern string, fn func(r Router)) Router {
 }
 
 var hasStatusType = deps.TypeOf[HasStatus]()
-var hasRequestTypesType = deps.TypeOf[HasRequestTypes]()
+var injectableType = deps.TypeOf[Injectable]()
 var errorType = deps.TypeOf[error]()
 
 func (site *Site) getOperation(fn any) api.Operation {
@@ -262,13 +262,14 @@ func (site *Site) getOperation(fn any) api.Operation {
 
 	for i := 0; i < fnType.NumIn(); i++ {
 		argType := fnType.In(i)
+		concrete, ptr := getConcretePointer(argType)
 
 		var bodyType, paramType, queryType, headerType reflect.Type
 
-		if argType.Implements(hasRequestTypesType) {
-			argInstance := reflect.New(argType).Elem().Interface()
-			if has, ok := argInstance.(HasRequestTypes); ok {
-				requestTypes := has.GetRequestTypes()
+		if ptr.Implements(injectableType) {
+			argInstance := reflect.New(concrete).Interface()
+			if has, ok := argInstance.(Injectable); ok {
+				requestTypes := has.APIRequestTypes()
 				bodyType = requestTypes.Body
 				paramType = requestTypes.Param
 				queryType = requestTypes.Query
@@ -276,17 +277,16 @@ func (site *Site) getOperation(fn any) api.Operation {
 			}
 		}
 
-		concreteType := getConcrete(argType)
-		if injectType, ok := site.injectTypes[concreteType]; ok {
+		if injectType, ok := site.injectTypes[concrete]; ok {
 			switch injectType {
 			case injectTypeBody:
-				bodyType = concreteType
+				bodyType = concrete
 			case injectTypeQuery:
-				queryType = concreteType
+				queryType = concrete
 			case injectTypeParam:
-				paramType = concreteType
+				paramType = concrete
 			case injectTypeHeader:
-				headerType = concreteType
+				headerType = concrete
 			}
 		}
 
@@ -406,20 +406,14 @@ func (site *Site) handle(fn any, op *api.Operation) http.HandlerFunc {
 		if err != nil {
 			site.HandleError(err, response, request, scope)
 		} else {
-			firstDefined := any(nil)
-			for _, r := range result {
-				if r != nil {
-					firstDefined = r
-					break
-				}
-			}
-			if firstDefined != nil {
+			returned := result.Defined()
+			if len(returned) > 0 {
 				status := 200
-				if hasStatus, ok := firstDefined.(HasStatus); ok {
+				if hasStatus, ok := returned[0].(HasStatus); ok && hasStatus != nil {
 					status = hasStatus.HTTPStatus()
 				}
 
-				sendJson(response, status, firstDefined)
+				sendJson(response, status, returned[0])
 			} else {
 				sendStatus(response, 200)
 			}
@@ -478,6 +472,16 @@ func (site *Site) dynamicRequestInjection(typ reflect.Type, scope *deps.Scope) (
 // arguments as a pointer and change the value.
 type MiddlewareNext func()
 
+// Creates a new MiddlewareNext given a handler and scope.
+func NewMiddlewareNext(h http.Handler, scope *deps.Scope) MiddlewareNext {
+	return func() {
+		w, _ := deps.GetScoped[http.ResponseWriter](scope)
+		r, _ := deps.GetScoped[http.Request](scope)
+
+		h.ServeHTTP(*w, r)
+	}
+}
+
 // Creates middleware which invokes the dependency injectable function.
 // The function has access to the request, response, scope, and any other
 // injectable request values. The values applied to the scope here will
@@ -485,17 +489,11 @@ type MiddlewareNext func()
 // If the function has problems injecting arguments or returns any errors
 // then the next handler in the stack will not be invoked and the error
 // will be handled like any other error.
-func (site *Site) middleware(fn any) Middleware {
+func (site *Site) middleware(fn any) func(h http.Handler) http.Handler {
 	return func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 			scope := site.GetScope(response, request)
-
-			scope.Set(MiddlewareNext(func() {
-				w, _ := deps.GetScoped[http.ResponseWriter](scope)
-				r, _ := deps.GetScoped[http.Request](scope)
-
-				h.ServeHTTP(*w, r)
-			}))
+			scope.Set(NewMiddlewareNext(h, scope))
 
 			result, err := scope.Invoke(fn)
 			if err == nil {
@@ -748,6 +746,136 @@ func (site *Site) Run() {
 	site.Listen(addr)
 }
 
+func (site *Site) PrintPaths() {
+	doc := site.BuildDocument()
+
+	paths := make([][]string, 0)
+	methodOrder := []string{
+		"GET", "POST", "PUT", "DELETE",
+		"PATCH", "HEAD", "OPTIONS", "TRACE",
+	}
+
+	includeAbout := false
+
+	for url, path := range doc.Paths {
+		ops := []*api.Operation{
+			path.Get, path.Post, path.Put, path.Delete,
+			path.Patch, path.Head, path.Options, path.Trace,
+		}
+		for methodIndex, op := range ops {
+			if op == nil {
+				continue
+			}
+
+			about := op.Summary
+			if about == "" {
+				about = op.Description
+			}
+			if about != "" {
+				includeAbout = true
+			}
+
+			paths = append(paths, []string{
+				methodOrder[methodIndex],
+				url,
+				about,
+			})
+		}
+	}
+
+	headers := []string{"Method", "URL"}
+	if includeAbout {
+		headers = append(headers, "About")
+	}
+
+	printGrid(headers, paths, gridOptions{
+		padding:  1,
+		space:    " ", // "\x20", // 32,
+		newline:  "\n",
+		tl:       "\u250C", // 218
+		tr:       "\u2510", // 191,
+		bl:       "\u2514", // 192,
+		br:       "\u2518", // 217,
+		h:        "\u2500", // 196,
+		v:        "\u2502", // 179,
+		c:        "\u253C", // 197,
+		tdivider: "\u252C", // 194,
+		ldivider: "\u251C", // 195,
+		rdivider: "\u2524", // 180,
+		bdivider: "\u2534", // 193,
+	})
+}
+
+type gridOptions struct {
+	padding  int
+	tl       string
+	tr       string
+	bl       string
+	br       string
+	h        string
+	v        string
+	c        string
+	tdivider string
+	ldivider string
+	rdivider string
+	bdivider string
+	space    string
+	newline  string
+}
+
+func printGrid(headers []string, grid [][]string, options gridOptions) {
+	columns := len(headers)
+	empty := make([]string, columns)
+	max := make([]int, columns)
+	for c := 0; c < columns; c++ {
+		max[c] = len(headers[c])
+	}
+	for _, row := range grid {
+		for c := 0; c < columns; c++ {
+			if len(row[c]) > max[c] {
+				max[c] = len(row[c])
+			}
+		}
+	}
+	rowWidth := (columns + 1) + columns*options.padding
+	for c := 0; c < columns; c++ {
+		rowWidth += max[c]
+	}
+	cap := rowWidth * (1 + len(grid)*2)
+
+	sb := strings.Builder{}
+	sb.Grow(cap)
+
+	printLines := func(l string, values []string, padding string, d string, r string) {
+		if len(l) > 0 {
+			sb.WriteString(l)
+		}
+		for c := 0; c < columns; c++ {
+			if c > 0 && len(d) > 0 {
+				sb.WriteString(d)
+			}
+			if padding != "" {
+				sb.WriteString(values[c])
+				sb.WriteString(strings.Repeat(string(padding), max[c]-len(values[c])+options.padding))
+			}
+		}
+		if len(r) > 0 {
+			sb.WriteString(r)
+		}
+		sb.WriteString(options.newline)
+	}
+
+	printLines(options.tl, empty, options.h, options.tdivider, options.tr)
+	printLines(options.v, headers, options.space, options.v, options.v)
+	for _, row := range grid {
+		printLines(options.ldivider, empty, options.h, options.c, options.rdivider)
+		printLines(options.v, row, options.space, options.v, options.v)
+	}
+	printLines(options.bl, empty, options.h, options.bdivider, options.br)
+
+	fmt.Print(sb.String())
+}
+
 func sendJsonBytes(response http.ResponseWriter, status int, bytes []byte) error {
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)
@@ -788,4 +916,9 @@ func getConcrete(typ reflect.Type) reflect.Type {
 		typ = typ.Elem()
 	}
 	return typ
+}
+
+func getConcretePointer(typ reflect.Type) (reflect.Type, reflect.Type) {
+	c := getConcrete(typ)
+	return c, reflect.PointerTo(c)
 }
