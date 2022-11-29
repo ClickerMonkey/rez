@@ -5,6 +5,10 @@ import (
 	"reflect"
 )
 
+// A type which can be merged with another type. Merging is about returning the defined values
+// in the given value and the values in the current value. The given value takes priority.
+// Slices and maps have different merging strategies based on the implementation and the
+// interfaces the value types implement.
 type CanMerge[T any] interface {
 	// Merging incorporates value into this and returns a new value. This or value are not modified.
 	// If value has non-default single values it will overwrite those values in this in the returned value.
@@ -50,14 +54,14 @@ var _ CanMerge[Document] = &Document{}
 // Merges documents
 func (base Document) Merge(next Document) Document {
 	return Document{
-		OpenAPI:      mergeValue(base.OpenAPI, next.OpenAPI),
-		Info:         *mergeCanMerge(&base.Info, &next.Info),
-		Servers:      mergeSliceReplace(base.Servers, next.Servers),
+		OpenAPI:      MergeValue(base.OpenAPI, next.OpenAPI),
+		Info:         *MergeCanMerge(&base.Info, &next.Info),
+		Servers:      MergeSliceReplace(base.Servers, next.Servers),
 		Paths:        MergeMap(base.Paths, next.Paths),
-		Components:   mergeCanMerge(base.Components, next.Components),
-		Security:     mergeSliceReplace(base.Security, next.Security),
-		Tags:         mergeSliceReplace(base.Tags, next.Tags),
-		ExternalDocs: mergeValue(base.ExternalDocs, next.ExternalDocs),
+		Components:   MergeCanMerge(base.Components, next.Components),
+		Security:     MergeSliceReplace(base.Security, next.Security),
+		Tags:         MergeSliceReplace(base.Tags, next.Tags),
+		ExternalDocs: MergeValue(base.ExternalDocs, next.ExternalDocs),
 	}
 }
 
@@ -82,12 +86,12 @@ var _ CanMerge[Info] = &Info{}
 // Merges info
 func (base Info) Merge(next Info) Info {
 	return Info{
-		Title:          mergeValue(base.Title, next.Title),
-		Description:    mergeValue(base.Description, next.Description),
-		TermsOfService: mergeValue(base.TermsOfService, next.TermsOfService),
-		Contact:        mergeCanMerge(base.Contact, next.Contact),
-		License:        mergeCanMerge(base.License, next.License),
-		Version:        mergeValue(base.Version, next.Version),
+		Title:          MergeValue(base.Title, next.Title),
+		Description:    MergeValue(base.Description, next.Description),
+		TermsOfService: MergeValue(base.TermsOfService, next.TermsOfService),
+		Contact:        MergeCanMerge(base.Contact, next.Contact),
+		License:        MergeCanMerge(base.License, next.License),
+		Version:        MergeValue(base.Version, next.Version),
 	}
 }
 
@@ -106,9 +110,9 @@ var _ CanMerge[Contact] = &Contact{}
 // Merges contact
 func (base Contact) Merge(next Contact) Contact {
 	return Contact{
-		Name:  mergeValue(base.Name, next.Name),
-		URL:   mergeValue(base.URL, next.URL),
-		Email: mergeValue(base.Email, next.Email),
+		Name:  MergeValue(base.Name, next.Name),
+		URL:   MergeValue(base.URL, next.URL),
+		Email: MergeValue(base.Email, next.Email),
 	}
 }
 
@@ -125,8 +129,8 @@ var _ CanMerge[License] = &License{}
 // Merges license
 func (base License) Merge(next License) License {
 	return License{
-		Name: mergeValue(base.Name, next.Name),
-		URL:  mergeValue(base.URL, next.URL),
+		Name: MergeValue(base.Name, next.Name),
+		URL:  MergeValue(base.URL, next.URL),
 	}
 }
 
@@ -442,10 +446,10 @@ var _ HasReference = &RequestBody{}
 // Merges request bodies
 func (base RequestBody) Merge(next RequestBody) RequestBody {
 	return RequestBody{
-		Reference:   mergeValue(base.Reference, next.Reference),
-		Description: mergeValue(base.Description, next.Description),
+		Reference:   MergeValue(base.Reference, next.Reference),
+		Description: MergeValue(base.Description, next.Description),
 		Content:     MergeMap(base.Content, next.Content),
-		Required:    mergeValue(base.Required, next.Required),
+		Required:    MergeValue(base.Required, next.Required),
 	}
 }
 func (hr RequestBody) GetReference() *Reference {
@@ -462,6 +466,7 @@ func (hr RequestBody) GetReferencePrefix() string {
 	return "#/components/requestBodies/"
 }
 
+// Similar to a parameter in the header, but reusable.
 type Header struct {
 	// Allows for an external definition of this header.
 	*Reference
@@ -479,8 +484,8 @@ var _ HasReference = &Header{}
 // Merges parameter
 func (base Header) Merge(next Header) Header {
 	return Header{
-		Reference:     mergeValue(base.Reference, next.Reference),
-		ParameterBase: *mergeCanMerge(&base.ParameterBase, &next.ParameterBase),
+		Reference:     MergeValue(base.Reference, next.Reference),
+		ParameterBase: *MergeCanMerge(&base.ParameterBase, &next.ParameterBase),
 	}
 }
 func (hr Header) GetReference() *Reference {
@@ -494,6 +499,7 @@ func (hr *Header) SetReference(ref string) {
 	}
 }
 
+// Using links, you can describe how various values returned by one operation can be used as input for other operations. This way, links provide a known relationship and traversal mechanism between the operations. The concept of links is somewhat similar to hypermedia, but OpenAPI links do not require the link information present in the actual responses.
 type Link struct {
 	// Allows for an external definition of this link.
 	*Reference
@@ -571,19 +577,19 @@ type Path struct {
 // Merges paths
 func (base Path) Merge(next Path) Path {
 	return Path{
-		Reference:   mergeValue(base.Reference, next.Reference),
-		Summary:     mergeValue(base.Summary, next.Summary),
-		Description: mergeValue(base.Description, next.Description),
-		Get:         mergeCanMerge(base.Get, next.Get),
-		Put:         mergeCanMerge(base.Put, next.Put),
-		Post:        mergeCanMerge(base.Post, next.Post),
-		Delete:      mergeCanMerge(base.Delete, next.Delete),
-		Options:     mergeCanMerge(base.Options, next.Options),
-		Head:        mergeCanMerge(base.Head, next.Head),
-		Patch:       mergeCanMerge(base.Patch, next.Patch),
-		Trace:       mergeCanMerge(base.Trace, next.Trace),
-		Servers:     mergeSliceReplace(base.Servers, next.Servers),
-		Parameters:  mergeSliceReplace(base.Parameters, next.Parameters),
+		Reference:   MergeValue(base.Reference, next.Reference),
+		Summary:     MergeValue(base.Summary, next.Summary),
+		Description: MergeValue(base.Description, next.Description),
+		Get:         MergeCanMerge(base.Get, next.Get),
+		Put:         MergeCanMerge(base.Put, next.Put),
+		Post:        MergeCanMerge(base.Post, next.Post),
+		Delete:      MergeCanMerge(base.Delete, next.Delete),
+		Options:     MergeCanMerge(base.Options, next.Options),
+		Head:        MergeCanMerge(base.Head, next.Head),
+		Patch:       MergeCanMerge(base.Patch, next.Patch),
+		Trace:       MergeCanMerge(base.Trace, next.Trace),
+		Servers:     MergeSliceReplace(base.Servers, next.Servers),
+		Parameters:  MergeSliceReplace(base.Parameters, next.Parameters),
 	}
 }
 
@@ -634,18 +640,18 @@ type Operation struct {
 // Merges operations
 func (base Operation) Merge(next Operation) Operation {
 	return Operation{
-		Tags:         mergeSliceUnique(base.Tags, next.Tags),
-		Summary:      mergeValue(base.Summary, next.Summary),
-		Description:  mergeValue(base.Description, next.Description),
-		ExternalDocs: mergeValue(base.ExternalDocs, next.ExternalDocs),
-		OperationID:  mergeValue(base.OperationID, next.OperationID),
-		Parameters:   mergeSliceReplace(base.Parameters, next.Parameters),
-		RequestBody:  mergeCanMerge(base.RequestBody, next.RequestBody),
+		Tags:         MergeSliceUnique(base.Tags, next.Tags),
+		Summary:      MergeValue(base.Summary, next.Summary),
+		Description:  MergeValue(base.Description, next.Description),
+		ExternalDocs: MergeValue(base.ExternalDocs, next.ExternalDocs),
+		OperationID:  MergeValue(base.OperationID, next.OperationID),
+		Parameters:   MergeSliceReplace(base.Parameters, next.Parameters),
+		RequestBody:  MergeCanMerge(base.RequestBody, next.RequestBody),
 		Responses:    MergeMap(base.Responses, next.Responses),
 		Callbacks:    MergeMap(base.Callbacks, next.Callbacks),
-		Deprecated:   mergeValue(base.Deprecated, next.Deprecated),
-		Security:     mergeSlice(base.Security, next.Security),
-		Servers:      mergeSliceReplace(base.Servers, next.Servers),
+		Deprecated:   MergeValue(base.Deprecated, next.Deprecated),
+		Security:     MergeSlice(base.Security, next.Security),
+		Servers:      MergeSliceReplace(base.Servers, next.Servers),
 	}
 }
 
@@ -658,17 +664,26 @@ func (op *Operation) AddParameters(build *Builder, in ParameterIn, typ reflect.T
 		param.Name = paramName
 		param.In = in
 		param.Deprecated = prop.Deprecated
+		param.Example = GetExample(prop)
+
+		examples := GetExamples(prop, ContentTypeJSON)
+		if len(examples) > 0 {
+			param.Examples = make(map[string]any)
+			for name, ex := range examples {
+				param.Examples[name] = ex.Value
+			}
+		}
 
 		if in == ParameterInPath {
 			param.Required = true
 		}
-		if build.isNullable(prop) {
+		if build.IsNullable(prop) {
 			param.AllowEmptyValue = true
 		} else {
 			param.Required = true
 		}
 
-		inner := build.getInnerSchema(prop)
+		inner := build.GetInnerSchema(prop)
 		if inner != nil {
 			param.Schema = inner
 			param.Description = prop.Description
@@ -778,15 +793,15 @@ var _ CanMerge[ParameterBase] = &ParameterBase{}
 // Merges parameter base type
 func (base ParameterBase) Merge(next ParameterBase) ParameterBase {
 	return ParameterBase{
-		Description:     mergeValue(base.Description, next.Description),
-		Required:        mergeValue(base.Required, next.Required),
-		Deprecated:      mergeValue(base.Deprecated, next.Deprecated),
-		AllowEmptyValue: mergeValue(base.AllowEmptyValue, next.AllowEmptyValue),
-		Style:           mergeValue(base.Style, next.Style),
-		Explode:         mergeValue(base.Explode, next.Explode),
-		AllowReserved:   mergeValue(base.AllowReserved, next.AllowReserved),
-		Schema:          mergeValue(base.Schema, next.Schema),
-		Example:         mergeValue(base.Example, next.Example),
+		Description:     MergeValue(base.Description, next.Description),
+		Required:        MergeValue(base.Required, next.Required),
+		Deprecated:      MergeValue(base.Deprecated, next.Deprecated),
+		AllowEmptyValue: MergeValue(base.AllowEmptyValue, next.AllowEmptyValue),
+		Style:           MergeValue(base.Style, next.Style),
+		Explode:         MergeValue(base.Explode, next.Explode),
+		AllowReserved:   MergeValue(base.AllowReserved, next.AllowReserved),
+		Schema:          MergeValue(base.Schema, next.Schema),
+		Example:         MergeValue(base.Example, next.Example),
 		Examples:        MergeMap(base.Examples, next.Examples),
 		Content:         MergeMap(base.Content, next.Content),
 	}
@@ -824,10 +839,10 @@ func (base Parameter) IsUnique(next Parameter) bool {
 // Merges parameter
 func (base Parameter) Merge(next Parameter) Parameter {
 	return Parameter{
-		Reference:     mergeValue(base.Reference, next.Reference),
-		Name:          mergeValue(base.Name, next.Name),
-		In:            mergeValue(base.In, next.In),
-		ParameterBase: *mergeCanMerge(&base.ParameterBase, &next.ParameterBase),
+		Reference:     MergeValue(base.Reference, next.Reference),
+		Name:          MergeValue(base.Name, next.Name),
+		In:            MergeValue(base.In, next.In),
+		ParameterBase: *MergeCanMerge(&base.ParameterBase, &next.ParameterBase),
 	}
 }
 func (hr Parameter) GetReference() *Reference {
@@ -917,8 +932,8 @@ var _ HasReference = &Response{}
 // Merges a response
 func (base Response) Merge(next Response) Response {
 	return Response{
-		Reference:   mergeValue(base.Reference, next.Reference),
-		Description: mergeValue(base.Description, next.Description),
+		Reference:   MergeValue(base.Reference, next.Reference),
+		Description: MergeValue(base.Description, next.Description),
 		Headers:     MergeMap(base.Headers, next.Headers),
 		Content:     MergeMap(base.Content, next.Content),
 		Links:       MergeMap(base.Links, next.Links),
@@ -1060,6 +1075,8 @@ func (bs *BoolSchema) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Returns a reference to the given type with the given name.
+// The type needs to implement HasReference.
 func Ref[V any](name string) V {
 	var empty V
 	asAny := any(&empty)
@@ -1069,13 +1086,15 @@ func Ref[V any](name string) V {
 	return empty
 }
 
+// Returns a reference to the given resource with the given name.
 func RefTo(canRef HasReference, name string) *Reference {
 	return &Reference{
 		Ref: canRef.GetReferencePrefix() + EscapePathPart(name),
 	}
 }
 
-func mergeValue[V comparable](base V, next V) V {
+// Merges base & next. If next is empty, base is returned. Otherwise next is returned.
+func MergeValue[V comparable](base V, next V) V {
 	var empty V
 	if next == empty {
 		return base
@@ -1083,7 +1102,8 @@ func mergeValue[V comparable](base V, next V) V {
 	return next
 }
 
-func mergeCanMerge[V CanMerge[V]](base *V, next *V) *V {
+// Merges base and next which implement CanMerge. This handles potential nils.
+func MergeCanMerge[V CanMerge[V]](base *V, next *V) *V {
 	if base == nil && next == nil {
 		return nil
 	}
@@ -1100,7 +1120,8 @@ func mergeCanMerge[V CanMerge[V]](base *V, next *V) *V {
 	return &merged
 }
 
-func mergeSlice[V any](base []V, next []V) []V {
+// Merges the two slices together, base first foolowed by next.
+func MergeSlice[V any](base []V, next []V) []V {
 	merged := make([]V, 0, len(base)+len(next))
 	if len(base) > 0 {
 		merged = append(merged, base...)
@@ -1111,7 +1132,8 @@ func mergeSlice[V any](base []V, next []V) []V {
 	return merged
 }
 
-func mergeSliceUnique[V comparable](base []V, next []V) []V {
+// Merges the two slices together, avoiding duplicate values.
+func MergeSliceUnique[V comparable](base []V, next []V) []V {
 	merged := make([]V, 0, len(base)+len(next))
 	if len(base) > 0 {
 		merged = append(merged, base...)
@@ -1133,7 +1155,9 @@ func mergeSliceUnique[V comparable](base []V, next []V) []V {
 	return merged
 }
 
-func mergeSliceReplace[V CanReplace[V]](base []V, next []V) []V {
+// Merges the two slices together, avoiding duplicates based on the
+// implementation of CanReplace.
+func MergeSliceReplace[V CanReplace[V]](base []V, next []V) []V {
 	merged := make([]V, 0, len(base)+len(next))
 	if len(base) > 0 {
 		merged = append(merged, base...)
@@ -1155,6 +1179,9 @@ func mergeSliceReplace[V CanReplace[V]](base []V, next []V) []V {
 	return merged
 }
 
+// Merges two maps. The value types can implement CanReplace and CanMerge
+// and the merging process will respect those implementations when dealing
+// with shared keys.
 func MergeMap[K comparable, V any](base map[K]V, next map[K]V) map[K]V {
 	merged := make(map[K]V, len(base)+len(next))
 	if len(base) > 0 {

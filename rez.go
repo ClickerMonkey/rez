@@ -42,6 +42,26 @@ type Router interface {
 	// Handles the given error if its a HandledError, is handled by the error handler, or is handled with default behavior.
 	HandleError(err error, response http.ResponseWriter, request *http.Request, scope *deps.Scope)
 
+	// Adds the types of the given values as injectable request bodies. This avoids
+	// the necessity of rez.Body or rez.Request. If any of the values/types
+	// have already been defined this will cause a panic.
+	DefineBody(bodies ...any)
+
+	// Adds the types of the given values as injectable parameters. This avoids
+	// the necessity of rez.Param or rez.Request. If any of the values/types
+	// have already been defined this will cause a panic.
+	DefineParam(params ...any)
+
+	// Adds the types of the given values as injectable query parameters. This avoids
+	// the necessity of rez.Query or rez.Request. If any of the values/types
+	// have already been defined this will cause a panic.
+	DefineQuery(queries ...any)
+
+	// Adds the types of the given values as injectable header values. This avoids
+	// the necessity of rez.Header. If any of the values/types
+	// have already been defined this will cause a panic.
+	DefineHeader(headers ...any)
+
 	// Gets the base operation which has all inherited tags and responses set at the current router.
 	GetOperations() *api.Operation
 
@@ -99,26 +119,26 @@ type Router interface {
 	// path, with a fresh middleware stack for the inline-Router.
 	Group(fn func(r Router)) Router
 
-	// Route mounts a sub-Router along a `pattern`` string.
+	// Route mounts a sub-Router along a `pattern` string.
 	Route(pattern string, fn func(r Router)) Router
 
 	// Handle and HandleFunc adds routes for `pattern` that matches all HTTP methods.
-	HandleFunc(pattern string, fn any, operations ...api.Operation)
+	HandleFunc(pattern string, fn any, operations ...api.Operation) *api.Path
 
 	// Method and MethodFunc adds routes for `pattern` that matches
 	// the `method` HTTP method.
-	MethodFunc(method, pattern string, fn any, operations ...api.Operation)
+	MethodFunc(method, pattern string, fn any, operations ...api.Operation) *api.Operation
 
 	// HTTP-method routing along `pattern`
 	Connect(pattern string, fn any)
-	Delete(pattern string, fn any, operations ...api.Operation)
-	Get(pattern string, fn any, operations ...api.Operation)
-	Head(pattern string, fn any, operations ...api.Operation)
-	Options(pattern string, fn any, operations ...api.Operation)
-	Patch(pattern string, fn any, operations ...api.Operation)
-	Post(pattern string, fn any, operations ...api.Operation)
-	Put(pattern string, fn any, operations ...api.Operation)
-	Trace(pattern string, fn any, operations ...api.Operation)
+	Delete(pattern string, fn any, operations ...api.Operation) *api.Operation
+	Get(pattern string, fn any, operations ...api.Operation) *api.Operation
+	Head(pattern string, fn any, operations ...api.Operation) *api.Operation
+	Options(pattern string, fn any, operations ...api.Operation) *api.Operation
+	Patch(pattern string, fn any, operations ...api.Operation) *api.Operation
+	Post(pattern string, fn any, operations ...api.Operation) *api.Operation
+	Put(pattern string, fn any, operations ...api.Operation) *api.Operation
+	Trace(pattern string, fn any, operations ...api.Operation) *api.Operation
 
 	// NotFound defines a handler to respond whenever a route could
 	// not be found.

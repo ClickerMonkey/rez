@@ -3,6 +3,8 @@ package rez
 import (
 	"context"
 	"encoding/json"
+	"flag"
+	"fmt"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -20,6 +22,7 @@ type Site struct {
 	ServeJSON bool
 	ServeXML  bool
 
+	injectTypes   map[reflect.Type]injectType
 	errorHandler  ErrorHandler
 	router        chi.Router
 	url           string
@@ -36,7 +39,8 @@ func New(router chi.Router) *Site {
 		ServeJSON: true,
 		ServeXML:  false,
 
-		router: router,
+		injectTypes: make(map[reflect.Type]injectType),
+		router:      router,
 	}
 
 	site.Open.Document.OpenAPI = "3.0.0"
@@ -84,6 +88,46 @@ func (site *Site) HandleError(err error, response http.ResponseWriter, request *
 		status = hasStatus.HTTPStatus()
 	}
 	http.Error(response, err.Error(), status)
+}
+
+// Adds the values/types of the given injection type.
+func (site *Site) addInjectTypes(it injectType, valuesOrTypes []any) {
+	for _, valueOrType := range valuesOrTypes {
+		typ := api.GetType(valueOrType)
+		if _, exists := site.injectTypes[typ]; exists {
+			panic(fmt.Sprintf("%v already defined as an injectable type", typ))
+		} else {
+			site.injectTypes[typ] = it
+		}
+	}
+}
+
+// Adds the types of the given values as injectable request bodies. This avoids
+// the necessity of rez.Body or rez.Request. If any of the values/types
+// have already been defined this will cause a panic.
+func (site *Site) DefineBody(bodies ...any) {
+	site.addInjectTypes(injectTypeBody, bodies)
+}
+
+// Adds the types of the given values as injectable parameters. This avoids
+// the necessity of rez.Param or rez.Request. If any of the values/types
+// have already been defined this will cause a panic.
+func (site *Site) DefineParam(bodies ...any) {
+	site.addInjectTypes(injectTypeParam, bodies)
+}
+
+// Adds the types of the given values as injectable query parameters. This avoids
+// the necessity of rez.Query or rez.Request. If any of the values/types
+// have already been defined this will cause a panic.
+func (site *Site) DefineQuery(bodies ...any) {
+	site.addInjectTypes(injectTypeQuery, bodies)
+}
+
+// Adds the types of the given values as injectable header values. This avoids
+// the necessity of rez.Header. If any of the values/types
+// have already been defined this will cause a panic.
+func (site *Site) DefineHeader(bodies ...any) {
+	site.addInjectTypes(injectTypeHeader, bodies)
 }
 
 // Gets the base operation which has all inherited tags and responses set at the current router.
@@ -209,50 +253,80 @@ func (site *Site) getOperation(fn any) api.Operation {
 		panic("Only functions can be passed to rez.Router")
 	}
 
+	full := api.GetOperation(fn)
+	if full != nil {
+		return *full
+	}
+
 	op := api.Operation{}
 
 	for i := 0; i < fnType.NumIn(); i++ {
 		argType := fnType.In(i)
+
+		var bodyType, paramType, queryType, headerType reflect.Type
+
 		if argType.Implements(hasRequestTypesType) {
 			argInstance := reflect.New(argType).Elem().Interface()
 			if has, ok := argInstance.(HasRequestTypes); ok {
 				requestTypes := has.GetRequestTypes()
+				bodyType = requestTypes.Body
+				paramType = requestTypes.Param
+				queryType = requestTypes.Query
+				headerType = requestTypes.Header
+			}
+		}
 
-				if requestTypes.Body != nil {
-					bodySchema := site.Open.GetSchema(requestTypes.Body)
-					if bodySchema != nil {
-						if op.RequestBody == nil {
-							op.RequestBody = &api.RequestBody{}
-						}
-						op.RequestBody.Required = true
-						if site.ServeJSON {
-							if op.RequestBody.Content == nil {
-								op.RequestBody.Content = api.Contents{}
-							}
-							op.RequestBody.Content[api.ContentTypeJSON] = &api.MediaType{
-								Schema: bodySchema,
-							}
-						}
+		concreteType := getConcrete(argType)
+		if injectType, ok := site.injectTypes[concreteType]; ok {
+			switch injectType {
+			case injectTypeBody:
+				bodyType = concreteType
+			case injectTypeQuery:
+				queryType = concreteType
+			case injectTypeParam:
+				paramType = concreteType
+			case injectTypeHeader:
+				headerType = concreteType
+			}
+		}
+
+		if bodyType != nil {
+			bodySchema := site.Open.GetSchema(bodyType)
+			if bodySchema != nil {
+				if op.RequestBody == nil {
+					op.RequestBody = &api.RequestBody{}
+				}
+				op.RequestBody.Required = true
+				op.RequestBody.Description = api.GetDescription(bodyType)
+				if site.ServeJSON {
+					if op.RequestBody.Content == nil {
+						op.RequestBody.Content = api.Contents{}
+					}
+					op.RequestBody.Content[api.ContentTypeJSON] = &api.MediaType{
+						Schema:  bodySchema,
+						Example: api.GetExample(bodyType),
 					}
 				}
-				if requestTypes.Param != nil {
-					op.AddParameters(site.Open, api.ParameterInPath, requestTypes.Param)
-				}
-				if requestTypes.Query != nil {
-					op.AddParameters(site.Open, api.ParameterInQuery, requestTypes.Query)
-				}
-				if requestTypes.Header != nil {
-					op.AddParameters(site.Open, api.ParameterInHeader, requestTypes.Header)
+				for contentType, content := range op.RequestBody.Content {
+					if content.Examples == nil {
+						content.Examples = api.GetExamples(bodyType, contentType)
+					}
 				}
 			}
+		}
+		if paramType != nil {
+			op.AddParameters(site.Open, api.ParameterInPath, paramType)
+		}
+		if queryType != nil {
+			op.AddParameters(site.Open, api.ParameterInQuery, queryType)
+		}
+		if headerType != nil {
+			op.AddParameters(site.Open, api.ParameterInHeader, headerType)
 		}
 	}
 
 	for i := 0; i < fnType.NumOut(); i++ {
-		out := fnType.Out(i)
-		for out.Kind() == reflect.Pointer {
-			out = out.Elem()
-		}
+		out := getConcrete(fnType.Out(i))
 
 		outSchema := site.Open.GetSchema(out)
 		if outSchema == nil {
@@ -285,6 +359,9 @@ func (site *Site) getOperation(fn any) api.Operation {
 			if existing.Content == nil {
 				existing.Content = api.Contents{}
 			}
+			if existing.Description == "" {
+				existing.Description = api.GetDescription(out)
+			}
 			content := existing.Content[api.ContentTypeJSON]
 			if content == nil {
 				content = &api.MediaType{}
@@ -302,6 +379,8 @@ func (site *Site) getOperation(fn any) api.Operation {
 	if op.Responses["200"] == nil {
 		op.Responses["200"] = &api.Response{}
 	}
+
+	api.GetOperationUpdate(fn, &op)
 
 	return op
 }
@@ -359,6 +438,7 @@ func (site *Site) GetScope(response http.ResponseWriter, request *http.Request) 
 	scope, isScope := request.Context().Value(ScopeKey).(*deps.Scope)
 	if !isScope {
 		scope = site.Scope.Spawn()
+		scope.Dynamic = site.dynamicRequestInjection
 		ctx := context.WithValue(request.Context(), ScopeKey, scope)
 		router := Router(site)
 
@@ -371,6 +451,31 @@ func (site *Site) GetScope(response http.ResponseWriter, request *http.Request) 
 	return scope
 }
 
+// Given a type and scope, try to return an injection value.
+func (site *Site) dynamicRequestInjection(typ reflect.Type, scope *deps.Scope) (any, error) {
+	typ = getConcrete(typ)
+	if injectType, ok := site.injectTypes[typ]; ok {
+		request, _ := deps.GetScoped[http.Request](scope)
+		val := reflect.New(typ).Interface()
+
+		switch injectType {
+		case injectTypeBody:
+			return val, getBody(val, request)
+		case injectTypeParam:
+			return val, getParam(val, request)
+		case injectTypeQuery:
+			return val, getQuery(val, request)
+		case injectTypeHeader:
+			return val, getHeader(val, request)
+		}
+	}
+
+	return nil, nil
+}
+
+// The function to forward middleware onto the next handler.
+// To change the request or response refer to them in the injectable function
+// arguments as a pointer and change the value.
 type MiddlewareNext func()
 
 // Creates middleware which invokes the dependency injectable function.
@@ -396,6 +501,7 @@ func (site *Site) middleware(fn any) Middleware {
 			if err == nil {
 				err = result.Err()
 			}
+
 			if err != nil {
 				site.HandleError(err, response, request, scope)
 			}
@@ -413,18 +519,19 @@ func (site *Site) applyOperations(operations []api.Operation, targets []**api.Op
 }
 
 // Handle and HandleFunc adds routes for `pattern` that matches all HTTP methods.
-func (site *Site) HandleFunc(pattern string, fn any, operations ...api.Operation) {
+func (site *Site) HandleFunc(pattern string, fn any, operations ...api.Operation) *api.Path {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{
 		&path.Get, &path.Post, &path.Put, &path.Patch, &path.Delete,
 		&path.Options, &path.Trace, &path.Head,
 	})
 	site.router.HandleFunc(pattern, site.handle(fn, nil)) // TODO
+	return path
 }
 
 // Method and MethodFunc adds routes for `pattern` that matches
 // the `method` HTTP method.
-func (site *Site) MethodFunc(method string, pattern string, fn any, operations ...api.Operation) {
+func (site *Site) MethodFunc(method string, pattern string, fn any, operations ...api.Operation) *api.Operation {
 	path := site.CreatePath(pattern)
 	target := []**api.Operation{nil}
 	switch strings.ToLower(method) {
@@ -447,58 +554,67 @@ func (site *Site) MethodFunc(method string, pattern string, fn any, operations .
 	}
 	site.applyOperations(operations, target)
 	site.router.MethodFunc(method, pattern, site.handle(fn, *target[0]))
+	return *target[0]
 }
 
 func (site *Site) Connect(pattern string, fn any) {
 	site.router.Connect(pattern, site.handle(fn, nil))
 }
 
-func (site *Site) Delete(pattern string, fn any, operations ...api.Operation) {
+func (site *Site) Delete(pattern string, fn any, operations ...api.Operation) *api.Operation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Delete})
 	site.router.Delete(pattern, site.handle(fn, path.Delete))
+	return path.Delete
 }
 
-func (site *Site) Get(pattern string, fn any, operations ...api.Operation) {
+func (site *Site) Get(pattern string, fn any, operations ...api.Operation) *api.Operation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Get})
 	site.router.Get(pattern, site.handle(fn, path.Get))
+	return path.Get
 }
 
-func (site *Site) Head(pattern string, fn any, operations ...api.Operation) {
+func (site *Site) Head(pattern string, fn any, operations ...api.Operation) *api.Operation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Head})
 	site.router.Head(pattern, site.handle(fn, path.Head))
+	return path.Head
 }
 
-func (site *Site) Options(pattern string, fn any, operations ...api.Operation) {
+func (site *Site) Options(pattern string, fn any, operations ...api.Operation) *api.Operation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Options})
 	site.router.Options(pattern, site.handle(fn, path.Options))
+	return path.Options
 }
 
-func (site *Site) Patch(pattern string, fn any, operations ...api.Operation) {
+func (site *Site) Patch(pattern string, fn any, operations ...api.Operation) *api.Operation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Patch})
 	site.router.Patch(pattern, site.handle(fn, path.Patch))
+	return path.Patch
 }
 
-func (site *Site) Post(pattern string, fn any, operations ...api.Operation) {
+func (site *Site) Post(pattern string, fn any, operations ...api.Operation) *api.Operation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Post})
 	site.router.Post(pattern, site.handle(fn, path.Post))
+	return path.Post
 }
 
-func (site *Site) Put(pattern string, fn any, operations ...api.Operation) {
+func (site *Site) Put(pattern string, fn any, operations ...api.Operation) *api.Operation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Put})
 	site.router.Put(pattern, site.handle(fn, path.Put))
+	return path.Put
 }
 
-func (site *Site) Trace(pattern string, fn any, operations ...api.Operation) {
+func (site *Site) Trace(pattern string, fn any, operations ...api.Operation) *api.Operation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Trace})
 	site.router.Trace(pattern, site.handle(fn, path.Trace))
+	return path.Trace
 }
 
 func (site *Site) NotFound(fn any) {
@@ -623,6 +739,15 @@ func (site *Site) Listen(addr string) {
 	http.ListenAndServe(addr, site.router)
 }
 
+func (site *Site) Run() {
+	addr := ":80"
+
+	flag.StringVar(&addr, "host", ":80", "The port & host to serve requests from.")
+	flag.Parse()
+
+	site.Listen(addr)
+}
+
 func sendJsonBytes(response http.ResponseWriter, status int, bytes []byte) error {
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)
@@ -647,4 +772,20 @@ func sendHtml(response http.ResponseWriter, status int, html []byte) error {
 func sendStatus(response http.ResponseWriter, status int) {
 	response.WriteHeader(status)
 	response.Write(nil)
+}
+
+type injectType int8
+
+const (
+	injectTypeBody injectType = iota
+	injectTypeParam
+	injectTypeQuery
+	injectTypeHeader
+)
+
+func getConcrete(typ reflect.Type) reflect.Type {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	return typ
 }
