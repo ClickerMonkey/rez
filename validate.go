@@ -20,6 +20,8 @@ type ValidationOptions struct {
 	EnforceFormat bool
 	// If specifying a deprecated value should result in a validation error.
 	FailDeprecated bool
+	// If validation should be skipped for deprecated schemas
+	SkipDeprecated bool
 }
 
 // A validation failure
@@ -198,11 +200,16 @@ func Validate(givenSchema *api.Schema, rawValue any, v *Validator) {
 		return
 	}
 
-	if schema.Deprecated && !isZero(val) {
-		v.Add(Validation{
-			Rule:   ValidationRuleDeprecated,
-			Schema: schema.GetName(),
-		})
+	if schema.Deprecated && (options.SkipDeprecated || options.FailDeprecated) && !isZero(val) {
+		if options.SkipDeprecated {
+			return
+		}
+		if options.FailDeprecated {
+			v.Add(Validation{
+				Rule:   ValidationRuleDeprecated,
+				Schema: schema.GetName(),
+			})
+		}
 	}
 
 	switch val.Kind() {
@@ -226,7 +233,7 @@ func Validate(givenSchema *api.Schema, rawValue any, v *Validator) {
 			v.Add(Validation{
 				Rule:    ValidationRuleMaxLength,
 				Schema:  schema.GetName(),
-				Message: fmt.Sprintf("%d does not meet the maximum items of %d", len, schema.MaxLength),
+				Message: fmt.Sprintf("%d exceeds the maximum length of %d", len, schema.MaxLength),
 			})
 		}
 
@@ -244,7 +251,7 @@ func Validate(givenSchema *api.Schema, rawValue any, v *Validator) {
 			v.Add(Validation{
 				Rule:    ValidationRuleMaxItems,
 				Schema:  schema.GetName(),
-				Message: fmt.Sprintf("%d does not meet the maximum items of %d", len, schema.MaxItems),
+				Message: fmt.Sprintf("%d exceeds the maximum items of %d", len, schema.MaxItems),
 			})
 		}
 		if schema.Items != nil {
@@ -285,7 +292,7 @@ func Validate(givenSchema *api.Schema, rawValue any, v *Validator) {
 			v.Add(Validation{
 				Rule:    ValidationRuleMaxProperties,
 				Schema:  schema.GetName(),
-				Message: fmt.Sprintf("%d does not meet the maximum properties of %d", len, schema.MaxProperties),
+				Message: fmt.Sprintf("%d exceeds the maximum properties of %d", len, schema.MaxProperties),
 			})
 		}
 		if schema.AdditionalProperties != nil && schema.AdditionalProperties.Schema != nil {
@@ -398,7 +405,7 @@ func Validate(givenSchema *api.Schema, rawValue any, v *Validator) {
 				}
 			}
 		}
-		if matches != 0 {
+		if matches != 1 {
 			v.Add(Validation{
 				Rule:    ValidationRuleOneOf,
 				Schema:  schema.GetName(),
@@ -498,7 +505,7 @@ func concrete(val any) reflect.Value {
 
 func concreteType(val any) reflect.Type {
 	typ := reflect.TypeOf(val)
-	for typ.Kind() == reflect.Pointer {
+	for typ != nil && typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
 	return typ
