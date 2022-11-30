@@ -59,12 +59,13 @@ There are a few other methods to get other injectable values.
 The [rez.Router](rez.go) is a wrapper of chi.Router where instead of `http.Hander`s and `http.HandlerFunc` you pass in a `func(args) results` which gets its arguments injected, and in the case of middleware is able to provide injected values for routes in the router. The function argument and result types are also inspected to build the OpenAPI documentation.
 
 ## Middleware
-Middleware in **rez** is also a dependency injected function. The middleware can return nothing or can return an error which if non-nil will be sent as the response. The middleware has a special injected value `rez.MiddlewareNext` which is a function to call if we want to call the next handler. _Any referenced arguments that are identified as a header, query, path, or body are added as those objects in all routes that are in the router using the middleware._
+Middleware in **rez** is also a dependency injected function. The middleware can return nothing or can return an error which if non-nil will be sent as the response. The middleware has a special injected value `rez.MiddlewareNext` which is a function to call if we want to call the next handler. _Any arguments or return types that are identified as headers, queries, paths, request bodies, or responses are added as those objects in all routes that are in the router using the middleware._
 
 Example:
 ```go
 // site.Use(authMiddleware)
 func authMiddleware(next rez.MiddlewareNext, r *http.Request) *rez.Unauthorized[string] {
+  // Accessing headers this way doesn't add it as a parameter to all routes that use the middleware.
   auth := r.Header.Get("Authorization")
   if auth == "" {
     return rez.NewUnauthorized("No access")
@@ -117,9 +118,9 @@ func echoToken(token Auth) Auth {
 
 // Usage
 site.Open.AddSecurity("queryAuth", &api.Security{
-  Type:         api.SecurityTypeApiKey,
-  Name:         "token",
-  In:           api.ParameterInQuery,
+  Type: api.SecurityTypeApiKey,
+  Name: "token",
+  In:   api.ParameterInQuery,
 })
 site.Use(authMiddleware)
 site.Get("/token", echoToken)
