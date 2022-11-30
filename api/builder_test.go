@@ -98,8 +98,8 @@ func (t TestHasName) APIName() string { return "TestHasNameAlias" }
 func TestGetName(t *testing.T) {
 	assert := assert.New(t)
 
-	assert.Equal("string", GetName(""))
-	assert.Equal("string", GetName(typeOf[string]()))
+	assert.Equal("String", GetName(""))
+	assert.Equal("String", GetName(typeOf[string]()))
 
 	assert.Equal("TestHasNameAlias", GetName(TestHasName{}))
 	assert.Equal("TestHasNameAlias", GetName(typeOf[TestHasName]()))
@@ -122,5 +122,5 @@ func TestGetNameQualified(t *testing.T) {
 	assert := assert.New(t)
 
 	assert.Equal("GithubComClickerMonkeyRezApiOperation", GetNameQualified(Operation{}))
-	assert.Equal("string", GetNameQualified(""))
+	assert.Equal("String", GetNameQualified(""))
 }

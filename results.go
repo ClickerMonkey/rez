@@ -30,6 +30,12 @@ func (err NotFound[V]) Error() string {
 	}
 	return msg
 }
+func (err NotFound[V]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(err.Result)
+}
+func (err *NotFound[V]) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &err.Result)
+}
 
 type OK[V any] struct {
 	Result V `json:"result,omitempty"`
@@ -54,6 +60,12 @@ func (err OK[V]) Error() string {
 		msg = http.StatusText(err.HTTPStatus())
 	}
 	return msg
+}
+func (err OK[V]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(err.Result)
+}
+func (err *OK[V]) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &err.Result)
 }
 
 type Created[V any] struct {
@@ -80,6 +92,12 @@ func (err Created[V]) Error() string {
 	}
 	return msg
 }
+func (err Created[V]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(err.Result)
+}
+func (err *Created[V]) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &err.Result)
+}
 
 type Accepted[V any] struct {
 	Result V `json:"result,omitempty"`
@@ -104,6 +122,12 @@ func (err Accepted[V]) Error() string {
 		msg = http.StatusText(err.HTTPStatus())
 	}
 	return msg
+}
+func (err Accepted[V]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(err.Result)
+}
+func (err *Accepted[V]) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &err.Result)
 }
 
 type BadRequest[V any] struct {
@@ -130,6 +154,12 @@ func (err BadRequest[V]) Error() string {
 	}
 	return msg
 }
+func (err BadRequest[V]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(err.Result)
+}
+func (err *BadRequest[V]) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &err.Result)
+}
 
 type Unauthorized[V any] struct {
 	Result V `json:"result,omitempty"`
@@ -154,6 +184,12 @@ func (err Unauthorized[V]) Error() string {
 		msg = http.StatusText(err.HTTPStatus())
 	}
 	return msg
+}
+func (err Unauthorized[V]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(err.Result)
+}
+func (err *Unauthorized[V]) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &err.Result)
 }
 
 type Forbidden[V any] struct {
@@ -180,6 +216,12 @@ func (err Forbidden[V]) Error() string {
 	}
 	return msg
 }
+func (err Forbidden[V]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(err.Result)
+}
+func (err *Forbidden[V]) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &err.Result)
+}
 
 type Conflict[V any] struct {
 	Result V `json:"result,omitempty"`
@@ -204,6 +246,12 @@ func (err Conflict[V]) Error() string {
 		msg = http.StatusText(err.HTTPStatus())
 	}
 	return msg
+}
+func (err Conflict[V]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(err.Result)
+}
+func (err *Conflict[V]) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &err.Result)
 }
 
 type TooManyRequests[V any] struct {
@@ -230,6 +278,12 @@ func (err TooManyRequests[V]) Error() string {
 	}
 	return msg
 }
+func (err TooManyRequests[V]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(err.Result)
+}
+func (err *TooManyRequests[V]) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &err.Result)
+}
 
 type InternalServerError[V any] struct {
 	Result V `json:"result,omitempty"`
@@ -254,6 +308,12 @@ func (err InternalServerError[V]) Error() string {
 		msg = http.StatusText(err.HTTPStatus())
 	}
 	return msg
+}
+func (err InternalServerError[V]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(err.Result)
+}
+func (err *InternalServerError[V]) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &err.Result)
 }
 
 type NotImplemented[V any] struct {
@@ -280,6 +340,12 @@ func (err NotImplemented[V]) Error() string {
 	}
 	return msg
 }
+func (err NotImplemented[V]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(err.Result)
+}
+func (err *NotImplemented[V]) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &err.Result)
+}
 
 type ServiceUnavailable[V any] struct {
 	Result V `json:"result,omitempty"`
@@ -305,6 +371,12 @@ func (err ServiceUnavailable[V]) Error() string {
 	}
 	return msg
 }
+func (err ServiceUnavailable[V]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(err.Result)
+}
+func (err *ServiceUnavailable[V]) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &err.Result)
+}
 
 type Result[V any] struct {
 	Status int
@@ -323,7 +395,7 @@ func (se Result[V]) HTTPStatus() int {
 	return se.Status
 }
 func (se Result[V]) HTTPStatuses() []int {
-	return []int{se.Status}
+	return []int{}
 }
 func (se Result[V]) MarshalJSON() ([]byte, error) {
 	return json.Marshal(se.Value)

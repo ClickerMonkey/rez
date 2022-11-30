@@ -2,7 +2,9 @@ package rez
 
 import (
 	"context"
+	"encoding"
 	"encoding/json"
+	"encoding/xml"
 	"flag"
 	"fmt"
 	"net/http"
@@ -28,6 +30,7 @@ type Site struct {
 	validationOptions map[reflect.Type]ValidationOptions
 	validationEnabled bool
 	errorHandler      ErrorHandler
+	internalHandler   InternalErrorHandler
 	router            chi.Router
 	url               string
 	baseOperation     api.Operation
@@ -79,28 +82,23 @@ func (site *Site) SetErrorHandler(handler ErrorHandler) {
 	site.errorHandler = handler
 }
 
+// Sets the handler for errors we received outside of responding to the client.
+func (site *Site) SetInternalErrorHandler(handle InternalErrorHandler) {
+	site.internalHandler = handle
+}
+
 // Handles the given error if its a HandledError, is handled by the error handler, or is handled with default behavior.
-func (site *Site) HandleError(err error, response http.ResponseWriter, request *http.Request, scope *deps.Scope) {
+func (site *Site) HandleError(err error, response http.ResponseWriter, request *http.Request, scope *deps.Scope) error {
 	if handled, ok := err.(HandledError); ok {
-		handled.Handle(response, request, scope)
-		return
+		return handled.Handle(response, request, scope)
 	}
 	if site.errorHandler != nil {
-		if site.errorHandler(err, response, request, scope) {
-			return
+		if handled, err := site.errorHandler(err, response, request, scope); handled {
+			return err
 		}
 	}
-	status := 500
-	json := false
-	if hasStatus, ok := any(err).(HasStatus); ok {
-		status = hasStatus.HTTPStatus()
-		json = true
-	}
-	if json {
-		sendJson(response, status, err)
-	} else {
-		http.Error(response, err.Error(), status)
-	}
+
+	return site.Send(err, response)
 }
 
 // Returns the validation options specified for the given type.
@@ -418,6 +416,7 @@ func (site *Site) getOperation(fn any) api.Operation {
 	return op
 }
 
+// Creates a HandlerFunc for the given function and operation.
 func (site *Site) handle(fn any, op *api.Operation) http.HandlerFunc {
 	fnType := reflect.TypeOf(fn)
 	if fnType.Kind() != reflect.Func {
@@ -428,8 +427,8 @@ func (site *Site) handle(fn any, op *api.Operation) http.HandlerFunc {
 		*op = op.Merge(site.getOperation(fn))
 	}
 
-	return func(response http.ResponseWriter, request *http.Request) {
-		scope := site.GetScope(response, request)
+	return func(w http.ResponseWriter, request *http.Request) {
+		scope := site.GetScope(w, request)
 
 		scope.Set(op)
 
@@ -439,21 +438,80 @@ func (site *Site) handle(fn any, op *api.Operation) http.HandlerFunc {
 		}
 
 		if err != nil {
-			site.HandleError(err, response, request, scope)
+			err := site.HandleError(err, w, request, scope)
+			if err != nil && site.internalHandler != nil {
+				site.internalHandler(err)
+			}
 		} else {
 			returned := result.Defined()
+			response := any(nil)
 			if len(returned) > 0 {
-				status := 200
-				if hasStatus, ok := returned[0].(HasStatus); ok && hasStatus != nil {
-					status = hasStatus.HTTPStatus()
-				}
+				response = returned[0]
+			}
 
-				sendJson(response, status, returned[0])
-			} else {
-				sendStatus(response, 200)
+			err := site.Send(response, w)
+			if err != nil {
+				site.internalHandler(err)
 			}
 		}
 	}
+}
+
+// Sends the response to the writer.
+func (site *Site) Send(response any, w http.ResponseWriter) error {
+	if canSend, ok := response.(CanSend); ok {
+		return canSend.HTTPSend(w)
+	}
+
+	status := http.StatusOK
+	if _, isError := response.(error); isError {
+		status = http.StatusInternalServerError
+	}
+	if hasStatus, ok := response.(HasStatus); ok {
+		status = hasStatus.HTTPStatus()
+	}
+
+	if response == nil {
+		w.WriteHeader(status)
+		_, err := w.Write(nil)
+		return err
+	}
+
+	contentType := string(api.ContentTypeJSON)
+	if hasContentType, ok := response.(HasContentType); ok {
+		contentType = hasContentType.HTTPContentType()
+	}
+
+	w.Header().Set("Content-Type", string(contentType))
+	w.WriteHeader(status)
+
+	switch {
+	case strings.Contains(contentType, "xml"):
+		enc := xml.NewEncoder(w)
+		return enc.Encode(response)
+	case strings.Contains(contentType, "json"):
+		enc := json.NewEncoder(w)
+		return enc.Encode(response)
+	case strings.Contains(contentType, "text"):
+		data := make([]byte, 0, 256)
+		if marshaller, ok := response.(encoding.TextMarshaler); ok {
+			text, err := marshaller.MarshalText()
+			if err != nil {
+				return err
+			}
+			data = text
+		} else if bytes, ok := response.([]byte); ok {
+			data = bytes
+		} else {
+			data = []byte(toString(response))
+		}
+		_, err := w.Write(data)
+		return err
+	}
+
+	// Unsupported type. Implement HTTPSend for this response type.
+	_, err := w.Write(nil)
+	return err
 }
 
 type scopeKey struct {
@@ -682,11 +740,11 @@ func (site *Site) ServeOpenJSON(pattern string) {
 	var builtJson []byte = nil
 	site.openJsonPath = site.url + pattern
 
-	site.router.Get(site.openJsonPath, func(response http.ResponseWriter, request *http.Request) {
+	site.router.Get(site.openJsonPath, func(w http.ResponseWriter, request *http.Request) {
 		if builtJson == nil {
 			builtJson = site.BuildJSON()
 		}
-		sendJsonBytes(response, 200, builtJson)
+		site.SendAny(builtJson, w, 200, api.ContentTypeJSON)
 	})
 }
 
@@ -694,6 +752,7 @@ func (site *Site) ensureServeOpenJSON(pattern string) {
 	if site.openJsonPath == "" {
 		replaceEnd := regexp.MustCompile(`[^/]+$`)
 		jsonPattern := replaceEnd.ReplaceAllString(pattern, "openapi3.json")
+
 		site.ServeOpenJSON(jsonPattern)
 	}
 }
@@ -749,7 +808,7 @@ func (site *Site) ServeSwaggerUI(pattern string, options map[string]any) {
 </html>`)
 
 	site.router.Get(pattern, func(w http.ResponseWriter, r *http.Request) {
-		sendHtml(w, 200, html)
+		site.SendAny(html, w, 200, api.ContentTypeHTML)
 	})
 }
 
@@ -774,7 +833,7 @@ func (site *Site) ServeRedoc(pattern string) {
 	`)
 
 	site.router.Get(pattern, func(w http.ResponseWriter, r *http.Request) {
-		sendHtml(w, 200, html)
+		site.SendAny(html, w, 200, api.ContentTypeHTML)
 	})
 }
 
@@ -921,30 +980,15 @@ func printGrid(headers []string, grid [][]string, options gridOptions) {
 	fmt.Print(sb.String())
 }
 
-func sendJsonBytes(response http.ResponseWriter, status int, bytes []byte) error {
-	response.Header().Set("Content-Type", "application/json")
-	response.WriteHeader(status)
-	_, err := response.Write(bytes)
-	return err
-}
-
-func sendJson(response http.ResponseWriter, status int, data any) error {
-	response.Header().Set("Content-Type", "application/json")
-	response.WriteHeader(status)
-	enc := json.NewEncoder(response)
-	return enc.Encode(data)
-}
-
-func sendHtml(response http.ResponseWriter, status int, html []byte) error {
-	response.Header().Set("Content-Type", "text/html")
-	response.WriteHeader(status)
-	_, err := response.Write(html)
-	return err
-}
-
-func sendStatus(response http.ResponseWriter, status int) {
-	response.WriteHeader(status)
-	response.Write(nil)
+func (site *Site) SendAny(response []byte, w http.ResponseWriter, status int, contentType api.ContentType) {
+	if contentType != api.ContentTypeNone {
+		w.Header().Set("Content-Type", string(contentType))
+	}
+	w.WriteHeader(status)
+	_, err := w.Write(response)
+	if err != nil && site.internalHandler != nil {
+		site.internalHandler(err)
+	}
 }
 
 type injectType int8

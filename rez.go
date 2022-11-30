@@ -9,20 +9,35 @@ import (
 )
 
 // A function which handles the error and returns true or returns false for the error to be handled by default behavior.
-type ErrorHandler = func(err error, response http.ResponseWriter, request *http.Request, scope *deps.Scope) bool
+type ErrorHandler = func(err error, response http.ResponseWriter, request *http.Request, scope *deps.Scope) (bool, error)
+
+// A function which handles an error that couldn't be sent to the client.
+type InternalErrorHandler = func(err error)
 
 // An error type which has custom error handling.
 type HandledError interface {
 	error
 	// Handle the error
-	Handle(response http.ResponseWriter, request *http.Request, scope *deps.Scope)
+	Handle(response http.ResponseWriter, request *http.Request, scope *deps.Scope) error
 }
 
+// A response type that has a known status but could return more than one status.
+// HTTPStatus is used when returning a response and HTTPStatuses is used for documentation.
 type HasStatus interface {
 	// The status of this particular response
 	HTTPStatus() int
 	// All possible statuses for this response type
 	HTTPStatuses() []int
+}
+
+// A response which has a custom content type.
+type HasContentType interface {
+	HTTPContentType() string
+}
+
+// A response which has custom sending logic.
+type CanSend interface {
+	HTTPSend(w http.ResponseWriter) error
 }
 
 // Router with OpenAPI integration and dependency injection
@@ -38,8 +53,11 @@ type Router interface {
 	// Sets the error handler at this router and all sub routers created after this is set.
 	SetErrorHandler(handler ErrorHandler)
 
+	// Sets the handler for errors we received outside of responding to the client.
+	SetInternalErrorHandler(handle InternalErrorHandler)
+
 	// Handles the given error if its a HandledError, is handled by the error handler, or is handled with default behavior.
-	HandleError(err error, response http.ResponseWriter, request *http.Request, scope *deps.Scope)
+	HandleError(err error, response http.ResponseWriter, request *http.Request, scope *deps.Scope) error
 
 	// Enables or disables validation for all routes in this router or sub routers created after this is set.
 	// By default validation is not enabled.

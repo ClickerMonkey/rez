@@ -33,7 +33,10 @@ type RequestTypes struct {
 type Injectable interface {
 	deps.Dynamic
 
+	// Return the types for any request types in this injectable.
 	APIRequestTypes() RequestTypes
+
+	// Do validation for this type.
 	APIValidate(op *api.Operation, v *Validator)
 }
 

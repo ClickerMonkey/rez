@@ -217,7 +217,9 @@ const (
 	ContentTypeJSON ContentType = "application/json"
 	ContentTypeXML  ContentType = "application/xml"
 	ContentTypeText ContentType = "text/plain"
+	ContentTypeHTML ContentType = "text/html"
 	ContentTypeAny  ContentType = "*/*"
+	ContentTypeNone ContentType = ""
 )
 
 // Schema data types
