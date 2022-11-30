@@ -10,6 +10,10 @@ type NotFound[V any] struct {
 	Result V `json:"result,omitempty"`
 }
 
+func NewNotFound[V any](result V) *NotFound[V] {
+	return &NotFound[V]{result}
+}
+
 var _ error = &NotFound[string]{}
 var _ HasStatus = &NotFound[string]{}
 
@@ -29,6 +33,10 @@ func (err NotFound[V]) Error() string {
 
 type OK[V any] struct {
 	Result V `json:"result,omitempty"`
+}
+
+func NewOK[V any](result V) *OK[V] {
+	return &OK[V]{result}
 }
 
 var _ error = &OK[string]{}
@@ -52,6 +60,10 @@ type Created[V any] struct {
 	Result V `json:"result,omitempty"`
 }
 
+func NewCreated[V any](result V) *Created[V] {
+	return &Created[V]{result}
+}
+
 var _ error = &Created[string]{}
 var _ HasStatus = &Created[string]{}
 
@@ -71,6 +83,10 @@ func (err Created[V]) Error() string {
 
 type Accepted[V any] struct {
 	Result V `json:"result,omitempty"`
+}
+
+func NewAccepted[V any](result V) *Accepted[V] {
+	return &Accepted[V]{result}
 }
 
 var _ error = &Accepted[string]{}
@@ -94,6 +110,10 @@ type BadRequest[V any] struct {
 	Result V `json:"result,omitempty"`
 }
 
+func NewBadRequest[V any](result V) *BadRequest[V] {
+	return &BadRequest[V]{result}
+}
+
 var _ error = &BadRequest[string]{}
 var _ HasStatus = &BadRequest[string]{}
 
@@ -113,6 +133,10 @@ func (err BadRequest[V]) Error() string {
 
 type Unauthorized[V any] struct {
 	Result V `json:"result,omitempty"`
+}
+
+func NewUnauthorized[V any](result V) *Unauthorized[V] {
+	return &Unauthorized[V]{result}
 }
 
 var _ error = &Unauthorized[string]{}
@@ -136,6 +160,10 @@ type Forbidden[V any] struct {
 	Result V `json:"result,omitempty"`
 }
 
+func NewForbidden[V any](result V) *Forbidden[V] {
+	return &Forbidden[V]{result}
+}
+
 var _ error = &Forbidden[string]{}
 var _ HasStatus = &Forbidden[string]{}
 
@@ -155,6 +183,10 @@ func (err Forbidden[V]) Error() string {
 
 type Conflict[V any] struct {
 	Result V `json:"result,omitempty"`
+}
+
+func NewConflict[V any](result V) *Conflict[V] {
+	return &Conflict[V]{result}
 }
 
 var _ error = &Conflict[string]{}
@@ -178,6 +210,10 @@ type TooManyRequests[V any] struct {
 	Result V `json:"result,omitempty"`
 }
 
+func NewTooManyRequests[V any](result V) *TooManyRequests[V] {
+	return &TooManyRequests[V]{result}
+}
+
 var _ error = &TooManyRequests[string]{}
 var _ HasStatus = &TooManyRequests[string]{}
 
@@ -197,6 +233,10 @@ func (err TooManyRequests[V]) Error() string {
 
 type InternalServerError[V any] struct {
 	Result V `json:"result,omitempty"`
+}
+
+func NewInternalServerError[V any](result V) *InternalServerError[V] {
+	return &InternalServerError[V]{result}
 }
 
 var _ error = &InternalServerError[string]{}
@@ -220,6 +260,10 @@ type NotImplemented[V any] struct {
 	Result V `json:"result,omitempty"`
 }
 
+func NewNotImplemented[V any](result V) *NotImplemented[V] {
+	return &NotImplemented[V]{result}
+}
+
 var _ error = &NotImplemented[string]{}
 var _ HasStatus = &NotImplemented[string]{}
 
@@ -239,6 +283,10 @@ func (err NotImplemented[V]) Error() string {
 
 type ServiceUnavailable[V any] struct {
 	Result V `json:"result,omitempty"`
+}
+
+func NewServiceUnavailable[V any](result V) *ServiceUnavailable[V] {
+	return &ServiceUnavailable[V]{result}
 }
 
 var _ error = &ServiceUnavailable[string]{}
@@ -261,6 +309,10 @@ func (err ServiceUnavailable[V]) Error() string {
 type Result[V any] struct {
 	Status int
 	Value  V
+}
+
+func NewResult[V any](status int, result V) *Result[V] {
+	return &Result[V]{status, result}
 }
 
 var _ json.Marshaler = &Result[string]{}

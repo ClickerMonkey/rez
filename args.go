@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/ClickerMonkey/deps"
+	"github.com/ClickerMonkey/rez/api"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -22,7 +23,7 @@ type None struct{}
 // the types that represent the parts of a request.
 type RequestTypes struct {
 	Body   reflect.Type
-	Param  reflect.Type
+	Path   reflect.Type
 	Query  reflect.Type
 	Header reflect.Type
 }
@@ -33,21 +34,30 @@ type Injectable interface {
 	deps.Dynamic
 
 	APIRequestTypes() RequestTypes
+	APIValidate(op *api.Operation, v *Validator)
 }
 
 // A function parameter that is injected with path parameters.
-type Param[P any] struct {
+type Path[P any] struct {
 	Value P
 }
 
-var _ Injectable = &Param[int]{}
+var _ Injectable = &Path[int]{}
 
-func (p Param[P]) APIRequestTypes() RequestTypes {
-	return RequestTypes{Param: deps.TypeOf[P]()}
+func (p Path[P]) APIRequestTypes() RequestTypes {
+	return RequestTypes{Path: deps.TypeOf[P]()}
 }
-func (r *Param[P]) ProvideDynamic(scope *deps.Scope) error {
+func (p Path[P]) APIValidate(op *api.Operation, v *Validator) {
+	schema := op.GetParametersSchema(api.ParameterInPath)
+	Validate(&schema, p.Value, v.Next("path"))
+}
+func (r *Path[P]) ProvideDynamic(scope *deps.Scope) error {
 	request, _ := deps.GetScoped[http.Request](scope)
-	return getParam(&r.Value, request)
+	err := getPath(&r.Value, request)
+	if err != nil {
+		return err
+	}
+	return ValidateInjectable(r, scope)
 }
 
 // A function parameter that is injected with query parameters.
@@ -60,9 +70,17 @@ var _ Injectable = &Query[int]{}
 func (q Query[Q]) APIRequestTypes() RequestTypes {
 	return RequestTypes{Query: deps.TypeOf[Q]()}
 }
+func (p Query[Q]) APIValidate(op *api.Operation, v *Validator) {
+	schema := op.GetParametersSchema(api.ParameterInQuery)
+	Validate(&schema, p.Value, v.Next("query"))
+}
 func (r *Query[Q]) ProvideDynamic(scope *deps.Scope) error {
 	request, _ := deps.GetScoped[http.Request](scope)
-	return getQuery(&r.Value, request)
+	err := getQuery(&r.Value, request)
+	if err != nil {
+		return err
+	}
+	return ValidateInjectable(r, scope)
 }
 
 // A function parameter that is injected with the request body.
@@ -75,22 +93,46 @@ var _ Injectable = &Body[int]{}
 func (b Body[B]) APIRequestTypes() RequestTypes {
 	return RequestTypes{Body: deps.TypeOf[B]()}
 }
+func (p Body[B]) APIValidate(op *api.Operation, v *Validator) {
+	if op.RequestBody != nil && op.RequestBody.Content != nil && op.RequestBody.Content[api.ContentTypeJSON] != nil {
+		media := op.RequestBody.Content[api.ContentTypeJSON]
+		if media.Schema != nil {
+			Validate(media.Schema, p.Value, v.Next("body"))
+		}
+	}
+}
 func (b *Body[B]) ProvideDynamic(scope *deps.Scope) error {
 	request, _ := deps.GetScoped[http.Request](scope)
-	return getBody(&b.Value, request)
+	err := getBody(&b.Value, request)
+	if err != nil {
+		return err
+	}
+	return ValidateInjectable(b, scope)
 }
 
 // A function parameter that is injected with the body, path, and query parameters.
 type Request[B any, P any, Q any] struct {
 	Body  B
-	Param P
+	Path  P
 	Query Q
 }
 
 var _ Injectable = &Request[int, int, int]{}
 
 func (r Request[B, P, Q]) APIRequestTypes() RequestTypes {
-	return RequestTypes{Body: deps.TypeOf[B](), Param: deps.TypeOf[P](), Query: deps.TypeOf[Q]()}
+	return RequestTypes{Body: deps.TypeOf[B](), Path: deps.TypeOf[P](), Query: deps.TypeOf[Q]()}
+}
+func (p Request[B, P, Q]) APIValidate(op *api.Operation, v *Validator) {
+	if op.RequestBody != nil && op.RequestBody.Content != nil && op.RequestBody.Content[api.ContentTypeJSON] != nil {
+		media := op.RequestBody.Content[api.ContentTypeJSON]
+		if media.Schema != nil {
+			Validate(media.Schema, p.Body, v.Next("body"))
+		}
+	}
+	pathSchema := op.GetParametersSchema(api.ParameterInPath)
+	Validate(&pathSchema, p.Path, v.Next("path"))
+	querySchema := op.GetParametersSchema(api.ParameterInQuery)
+	Validate(&querySchema, p.Query, v.Next("query"))
 }
 func (r *Request[B, P, Q]) ProvideDynamic(scope *deps.Scope) error {
 	request, _ := deps.GetScoped[http.Request](scope)
@@ -98,7 +140,7 @@ func (r *Request[B, P, Q]) ProvideDynamic(scope *deps.Scope) error {
 	if err != nil {
 		return err
 	}
-	err = getParam(&r.Param, request)
+	err = getPath(&r.Path, request)
 	if err != nil {
 		return err
 	}
@@ -106,7 +148,7 @@ func (r *Request[B, P, Q]) ProvideDynamic(scope *deps.Scope) error {
 	if err != nil {
 		return err
 	}
-	return nil
+	return ValidateInjectable(r, scope)
 }
 
 // A function parameter that is injected with the request headers.
@@ -119,9 +161,32 @@ var _ Injectable = &Header[int]{}
 func (h Header[H]) APIRequestTypes() RequestTypes {
 	return RequestTypes{Header: deps.TypeOf[H]()}
 }
+func (h Header[H]) APIValidate(op *api.Operation, v *Validator) {
+	schema := op.GetParametersSchema(api.ParameterInHeader)
+	Validate(&schema, h.Value, v.Next("header"))
+}
 func (r *Header[H]) ProvideDynamic(scope *deps.Scope) error {
 	request, _ := deps.GetScoped[http.Request](scope)
-	return getHeader(&r.Value, request)
+	err := getHeader(&r.Value, request)
+	if err != nil {
+		return err
+	}
+	return ValidateInjectable(r, scope)
+}
+
+// Validates the injectable by pulling the validator and operation
+// off of the scope and calling APIValidate. If there are any validation
+// errors the validator (which implements error) is returned.
+func ValidateInjectable(inj Injectable, scope *deps.Scope) error {
+	v, _ := deps.GetScoped[Validator](scope)
+	op, _ := deps.GetScoped[api.Operation](scope)
+
+	inj.APIValidate(op, v)
+
+	if len(*v.Validations) > 0 {
+		return v
+	}
+	return nil
 }
 
 func getHeader(header any, r *http.Request) error {
@@ -133,7 +198,7 @@ func getHeader(header any, r *http.Request) error {
 		}
 	}
 
-	outNode.fixForType(reflect.TypeOf(header))
+	outNode.fixForType(nonAnyType(header))
 	out := outNode.convert()
 	enc := encodeMap(header, out)
 
@@ -150,7 +215,7 @@ func getBody(body any, r *http.Request) error {
 	return nil
 }
 
-func getParam(param any, r *http.Request) error {
+func getPath(path any, r *http.Request) error {
 	outNode := &queryNode{}
 
 	ctx := chi.RouteContext(r.Context())
@@ -161,9 +226,9 @@ func getParam(param any, r *http.Request) error {
 		}
 	}
 
-	outNode.fixForType(reflect.TypeOf(param))
+	outNode.fixForType(nonAnyType(path))
 	out := outNode.convert()
-	enc := encodeMap(param, out)
+	enc := encodeMap(path, out)
 
 	return enc
 }
@@ -185,11 +250,19 @@ func getQuery(query any, r *http.Request) error {
 		curr.set(v[0])
 	}
 
-	outNode.fixForType(reflect.TypeOf(query))
+	outNode.fixForType(nonAnyType(query))
 	out := outNode.convert()
 	enc := encodeMap(query, out)
 
 	return enc
+}
+
+func nonAnyType(val any) reflect.Type {
+	rv := reflect.ValueOf(val)
+	for rv.Kind() == reflect.Interface || rv.Kind() == reflect.Pointer {
+		rv = rv.Elem()
+	}
+	return rv.Type()
 }
 
 func encodeMap(target any, m any) error {
@@ -256,9 +329,7 @@ func (node *queryNode) set(value any) {
 }
 
 func (node *queryNode) fixForType(typ reflect.Type) {
-	for typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
+	typ = getConcrete(typ)
 
 	switch node.kind {
 	case queryNodeKindSlice:

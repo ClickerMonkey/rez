@@ -14,7 +14,7 @@ func main() {
 	// /echo?message=HelloWorld!
 	site.Get("/echo", func(q rez.Query[Echo]) (*Echo, *rez.NotFound[string]) {
 		if q.Value.Message == "" {
-			return nil, &rez.NotFound[string]{Result: "message is required"}
+			return nil, rez.NewNotFound("message is required")
 		}
 		return &q.Value, nil
 	})

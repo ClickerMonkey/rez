@@ -16,22 +16,27 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// The main router for rez. Can only be created with rez.New. All sub routers
+// created are also a Site.
 type Site struct {
 	Open      *api.Builder
 	Scope     *deps.Scope
 	ServeJSON bool
 	ServeXML  bool
 
-	injectTypes   map[reflect.Type]injectType
-	errorHandler  ErrorHandler
-	router        chi.Router
-	url           string
-	baseOperation api.Operation
-	openJsonPath  string
+	injectTypes       map[reflect.Type]injectType
+	validationOptions map[reflect.Type]ValidationOptions
+	validationEnabled bool
+	errorHandler      ErrorHandler
+	router            chi.Router
+	url               string
+	baseOperation     api.Operation
+	openJsonPath      string
 }
 
 var _ Router = &Site{}
 
+// Creates a new site given the base chi.Router.
 func New(router chi.Router) *Site {
 	site := &Site{
 		Open:      api.NewBuilder(),
@@ -39,8 +44,9 @@ func New(router chi.Router) *Site {
 		ServeJSON: true,
 		ServeXML:  false,
 
-		injectTypes: make(map[reflect.Type]injectType),
-		router:      router,
+		injectTypes:       make(map[reflect.Type]injectType),
+		validationOptions: make(map[reflect.Type]ValidationOptions),
+		router:            router,
 	}
 
 	site.Open.Document.OpenAPI = "3.0.0"
@@ -51,6 +57,7 @@ func New(router chi.Router) *Site {
 	return site
 }
 
+// Copies the site and operation template.
 func (site Site) copy() *Site {
 	copy := site
 	copy.baseOperation = api.Operation{}.Merge(site.baseOperation)
@@ -84,10 +91,36 @@ func (site *Site) HandleError(err error, response http.ResponseWriter, request *
 		}
 	}
 	status := 500
+	json := false
 	if hasStatus, ok := any(err).(HasStatus); ok {
 		status = hasStatus.HTTPStatus()
+		json = true
 	}
-	http.Error(response, err.Error(), status)
+	if json {
+		sendJson(response, status, err)
+	} else {
+		http.Error(response, err.Error(), status)
+	}
+}
+
+// Returns the validation options specified for the given type.
+func (site Site) ValidationOptions(typ reflect.Type) ValidationOptions {
+	if !site.validationEnabled {
+		return ValidationOptions{Skip: true}
+	}
+	return site.validationOptions[typ]
+}
+
+// Sets the validation options for the type or value's type.
+func (site *Site) SetValidationOptions(valueOrType any, options ValidationOptions) {
+	typ := api.GetType(valueOrType)
+	site.validationOptions[typ] = options
+}
+
+// Enables or disables validation for all routes in this router or sub routers created after this is set.
+// By default validation is not enabled.
+func (site *Site) EnableValidation(enabled bool) {
+	site.validationEnabled = enabled
 }
 
 // Adds the values/types of the given injection type.
@@ -109,11 +142,11 @@ func (site *Site) DefineBody(bodies ...any) {
 	site.addInjectTypes(injectTypeBody, bodies)
 }
 
-// Adds the types of the given values as injectable parameters. This avoids
+// Adds the types of the given values as injectable path parameters. This avoids
 // the necessity of rez.Param or rez.Request. If any of the values/types
 // have already been defined this will cause a panic.
-func (site *Site) DefineParam(bodies ...any) {
-	site.addInjectTypes(injectTypeParam, bodies)
+func (site *Site) DefinePath(paths ...any) {
+	site.addInjectTypes(injectTypePath, paths)
 }
 
 // Adds the types of the given values as injectable query parameters. This avoids
@@ -264,14 +297,14 @@ func (site *Site) getOperation(fn any) api.Operation {
 		argType := fnType.In(i)
 		concrete, ptr := getConcretePointer(argType)
 
-		var bodyType, paramType, queryType, headerType reflect.Type
+		var bodyType, pathType, queryType, headerType reflect.Type
 
 		if ptr.Implements(injectableType) {
 			argInstance := reflect.New(concrete).Interface()
 			if has, ok := argInstance.(Injectable); ok {
 				requestTypes := has.APIRequestTypes()
 				bodyType = requestTypes.Body
-				paramType = requestTypes.Param
+				pathType = requestTypes.Path
 				queryType = requestTypes.Query
 				headerType = requestTypes.Header
 			}
@@ -283,8 +316,8 @@ func (site *Site) getOperation(fn any) api.Operation {
 				bodyType = concrete
 			case injectTypeQuery:
 				queryType = concrete
-			case injectTypeParam:
-				paramType = concrete
+			case injectTypePath:
+				pathType = concrete
 			case injectTypeHeader:
 				headerType = concrete
 			}
@@ -314,8 +347,8 @@ func (site *Site) getOperation(fn any) api.Operation {
 				}
 			}
 		}
-		if paramType != nil {
-			op.AddParameters(site.Open, api.ParameterInPath, paramType)
+		if pathType != nil {
+			op.AddParameters(site.Open, api.ParameterInPath, pathType)
 		}
 		if queryType != nil {
 			op.AddParameters(site.Open, api.ParameterInQuery, queryType)
@@ -398,6 +431,8 @@ func (site *Site) handle(fn any, op *api.Operation) http.HandlerFunc {
 	return func(response http.ResponseWriter, request *http.Request) {
 		scope := site.GetScope(response, request)
 
+		scope.Set(op)
+
 		result, err := scope.Invoke(fn)
 		if err == nil {
 			err = result.Err()
@@ -435,12 +470,14 @@ func (site *Site) GetScope(response http.ResponseWriter, request *http.Request) 
 		scope.Dynamic = site.dynamicRequestInjection
 		ctx := context.WithValue(request.Context(), ScopeKey, scope)
 		router := Router(site)
+		validator := NewValidator(site, scope)
 
 		deps.SetScoped(scope, request.WithContext(ctx))
 		deps.SetScoped(scope, &response)
 		deps.SetScoped(scope, &ctx)
 		deps.SetScoped(scope, &router)
 		deps.SetScoped(scope, scope)
+		deps.SetScoped(scope, validator)
 	}
 	return scope
 }
@@ -449,19 +486,26 @@ func (site *Site) GetScope(response http.ResponseWriter, request *http.Request) 
 func (site *Site) dynamicRequestInjection(typ reflect.Type, scope *deps.Scope) (any, error) {
 	typ = getConcrete(typ)
 	if injectType, ok := site.injectTypes[typ]; ok {
-		request, _ := deps.GetScoped[http.Request](scope)
 		val := reflect.New(typ).Interface()
+
+		var inj Injectable
 
 		switch injectType {
 		case injectTypeBody:
-			return val, getBody(val, request)
-		case injectTypeParam:
-			return val, getParam(val, request)
+			inj = &Body[any]{Value: val}
+		case injectTypePath:
+			inj = &Path[any]{Value: val}
 		case injectTypeQuery:
-			return val, getQuery(val, request)
+			inj = &Query[any]{Value: val}
 		case injectTypeHeader:
-			return val, getHeader(val, request)
+			inj = &Header[any]{Value: val}
 		}
+
+		err := inj.ProvideDynamic(scope)
+		if err != nil {
+			return nil, err
+		}
+		return val, nil
 	}
 
 	return nil, nil
@@ -493,6 +537,7 @@ func (site *Site) middleware(fn any) func(h http.Handler) http.Handler {
 	return func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 			scope := site.GetScope(response, request)
+
 			scope.Set(NewMiddlewareNext(h, scope))
 
 			result, err := scope.Invoke(fn)
@@ -906,7 +951,7 @@ type injectType int8
 
 const (
 	injectTypeBody injectType = iota
-	injectTypeParam
+	injectTypePath
 	injectTypeQuery
 	injectTypeHeader
 )

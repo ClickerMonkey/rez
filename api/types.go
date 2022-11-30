@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"reflect"
+	"regexp"
+	"strings"
 )
 
 // A type which can be merged with another type. Merging is about returning the defined values
@@ -239,7 +241,10 @@ type Schema struct {
 	*Reference
 
 	// Internal flag to note that a schema must be referenced if additional properties want to be applied
-	named *Reference
+	named      *Reference
+	referenced *Schema
+	typ        reflect.Type
+	pattern    *regexp.Regexp
 
 	// The schema type, if there is only one known
 	Type DataType `json:"type,omitempty"`
@@ -250,29 +255,29 @@ type Schema struct {
 	// Numbers can be restricted to a multiple of a given number, using the multipleOf keyword. It may be set to any positive number.
 	MultipleOf int `json:"multipleOf,omitempty"`
 	// Ranges of numbers are specified using a combination of the minimum and maximum keywords, (or exclusiveMinimum and exclusiveMaximum for expressing exclusive range).
-	Maximum int `json:"maximum,omitempty"`
+	Maximum *int `json:"maximum,omitempty"`
 	// Ranges of numbers are specified using a combination of the minimum and maximum keywords, (or exclusiveMinimum and exclusiveMaximum for expressing exclusive range).
 	ExclusiveMaximum bool `json:"exclusiveMaximum,omitempty"`
 	// Ranges of numbers are specified using a combination of the minimum and maximum keywords, (or exclusiveMinimum and exclusiveMaximum for expressing exclusive range).
-	Minimum int `json:"minimum,omitempty"`
+	Minimum *int `json:"minimum,omitempty"`
 	// Ranges of numbers are specified using a combination of the minimum and maximum keywords, (or exclusiveMinimum and exclusiveMaximum for expressing exclusive range).
 	ExclusiveMinimum bool `json:"exclusiveMinimum,omitempty"`
 	// The length of a string can be constrained using the minLength and maxLength keywords. For both keywords, the value must be a non-negative number.
 	MaxLength int `json:"maxLength,omitempty"`
 	// The length of a string can be constrained using the minLength and maxLength keywords. For both keywords, the value must be a non-negative number.
-	MinLength int `json:"minLength,omitempty"`
+	MinLength *int `json:"minLength,omitempty"`
 	// (This string SHOULD be a valid regular expression, according to the Ecma-262 Edition 5.1 regular expression dialect)
 	Pattern string `json:"pattern,omitempty"`
 	// The length of the array can be specified using the minItems and maxItems keywords. The value of each keyword must be a non-negative number. These keywords work whether doing list validation or Tuple validation.
 	MaxItems int `json:"maxItems,omitempty"`
 	// The length of the array can be specified using the minItems and maxItems keywords. The value of each keyword must be a non-negative number. These keywords work whether doing list validation or Tuple validation.
-	MinItems int `json:"minItems,omitempty"`
+	MinItems *int `json:"minItems,omitempty"`
 	// A schema can ensure that each of the items in an array is unique. Simply set the uniqueItems keyword to true.
 	UniqueItems bool `json:"uniqueItems,omitempty"`
 	// The number of properties on an object can be restricted using the minProperties and maxProperties keywords. Each of these must be a non-negative integer.
 	MaxProperties int `json:"maxProperties,omitempty"`
 	// The number of properties on an object can be restricted using the minProperties and maxProperties keywords. Each of these must be a non-negative integer.
-	MinProperties int `json:"minProperties,omitempty"`
+	MinProperties *int `json:"minProperties,omitempty"`
 	// By default, the properties defined by the properties keyword are not required. However, one can provide a list of required properties using the required keyword.
 	Required []string `json:"required,omitempty"`
 	// The enum keyword is used to restrict a value to a fixed set of values. It must be an array with at least one element, where each element is unique.
@@ -364,6 +369,27 @@ func (hr *Schema) SetReference(ref string) {
 func (hr Schema) GetReferencePrefix() string {
 	return "#/components/schemas/"
 }
+func (hr *Schema) AsReference() *Schema {
+	if hr.named != nil {
+		return &Schema{Reference: hr.named, referenced: hr}
+	}
+	return hr
+}
+func (s *Schema) ResolveReference() *Schema {
+	if s == nil || s.referenced == nil {
+		return s
+	}
+	return s.referenced
+}
+func (s Schema) GetName() *string {
+	return getName(s.named, &s)
+}
+func (s *Schema) GetPattern() *regexp.Regexp {
+	if s.pattern == nil && s.Pattern != "" {
+		s.pattern, _ = regexp.Compile(s.Pattern)
+	}
+	return s.pattern
+}
 
 // When request bodies or response payloads may be one of a number of different schemas, a discriminator object can be used to aid in serialization, deserialization, and validation. The discriminator is a specific object in a schema which is used to inform the consumer of the specification of an alternative schema based on the value associated with it.
 //
@@ -423,6 +449,9 @@ func (hr *Example) SetReference(ref string) {
 func (hr Example) GetReferencePrefix() string {
 	return "#/components/examples/"
 }
+func (hr Example) GetName() *string {
+	return getName(hr.named, &hr)
+}
 
 // Describes a single request body.
 type RequestBody struct {
@@ -464,6 +493,9 @@ func (hr *RequestBody) SetReference(ref string) {
 }
 func (hr RequestBody) GetReferencePrefix() string {
 	return "#/components/requestBodies/"
+}
+func (hr RequestBody) GetName() *string {
+	return getName(hr.named, &hr)
 }
 
 // Similar to a parameter in the header, but reusable.
@@ -536,6 +568,9 @@ func (hr *Link) SetReference(ref string) {
 func (hr Link) GetReferencePrefix() string {
 	return "#/components/links/"
 }
+func (hr Link) GetName() *string {
+	return getName(hr.named, &hr)
+}
 
 // A map of possible out-of band callbacks related to the parent operation. Each value in the map is a Path Item Object that describes a set of requests that may be initiated by the API provider and the expected responses. The key value used to identify the path item object is an expression, evaluated at runtime, that identifies a URL to use for the callback operation.
 type Callbacks map[string] /*event*/ map[string] /*url*/ Path
@@ -607,6 +642,9 @@ func (hr *Path) SetReference(ref string) {
 }
 func (hr Path) GetReferencePrefix() string {
 	return "#/paths/"
+}
+func (hr Path) GetName() *string {
+	return getName(hr.named, &hr)
 }
 
 // Describes a single API operation on a path.
@@ -697,6 +735,29 @@ func (op *Operation) AddParameters(build *Builder, in ParameterIn, typ reflect.T
 
 		op.Parameters = append(op.Parameters, param)
 	}
+}
+func (op *Operation) GetParameters(in ParameterIn) []Parameter {
+	params := make([]Parameter, 0, len(op.Parameters))
+	if len(op.Parameters) > 0 {
+		for _, param := range op.Parameters {
+			if param.In == in {
+				params = append(params, param)
+			}
+		}
+	}
+	return params
+}
+func (op *Operation) GetParametersSchema(in ParameterIn) Schema {
+	schema := Schema{
+		Type:                 DataTypeObject,
+		Properties:           make(map[string]Schema),
+		AdditionalProperties: SchemaForBool(false),
+	}
+	params := op.GetParameters(in)
+	for _, param := range params {
+		schema.Properties[param.Name] = *param.Schema
+	}
+	return schema
 }
 
 // A simple object to allow referencing other components in the specification, internally and externally.
@@ -861,6 +922,9 @@ func (hr *Parameter) SetReference(ref string) {
 func (hr Parameter) GetReferencePrefix() string {
 	return "#/components/parameters/"
 }
+func (hr Parameter) GetName() *string {
+	return getName(hr.named, &hr)
+}
 
 // Each Media Type Object provides schema and examples for the media type identified by its key.
 type MediaType struct {
@@ -955,6 +1019,9 @@ func (hr *Response) SetReference(ref string) {
 func (hr Response) GetReferencePrefix() string {
 	return "#/components/responses/"
 }
+func (hr Response) GetName() *string {
+	return getName(hr.named, &hr)
+}
 
 // A security type
 type SecurityType string
@@ -1011,6 +1078,9 @@ func (hr *Security) SetReference(ref string) {
 }
 func (hr Security) GetReferencePrefix() string {
 	return "#/components/securitySchemes/"
+}
+func (hr Security) GetName() *string {
+	return getName(hr.named, &hr)
 }
 
 // Lists the required security schemes to execute this operation. The name used for each property MUST correspond to a security scheme declared in the Security Schemes under the Components Object.
@@ -1086,6 +1156,37 @@ func (bs *BoolSchema) UnmarshalJSON(data []byte) error {
 		*bs = BoolSchema{Schema: &schema}
 	}
 	return nil
+}
+
+var FormatRegex map[string]*regexp.Regexp = map[string]*regexp.Regexp{
+	"date-time":    regexp.MustCompile(`\d{4}-\d\d?-\d\d?[T ]\d\d?:\d\d:\d\d(\+\d\d:\d\d|)`),
+	"time":         regexp.MustCompile(`\d\d?:\d\d:\d\d(\+\d\d:\d\d|)`),
+	"date":         regexp.MustCompile(`\d{4}-\d\d?-\d\d?`),
+	"duration":     regexp.MustCompile(`^P((\d+\.)?\d+[YMWD]$)?((\d+\.)?\d+Y$)?((\d+\.)?\d+M$)?((\d+\.)?\d+W$)?((\d+\.)?\d+D$)?(T((\d+\.)?\d+[HMS]$)((\d+\.)?\d+H$)?((\d+\.)?\d+M$)?((\d+\.)?\d+S$)?)?`),
+	"email":        regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,4}$`),
+	"idn-email":    regexp.MustCompile(`.+@.+\..+`),
+	"hostname":     regexp.MustCompile(`^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$`),
+	"idn-hostname": regexp.MustCompile(`^(?:[\p{L}\p{N}][\p{L}\p{N}-_]*.)+[\p{L}\p{N}]{2,}$`),
+	"ipv4":         regexp.MustCompile(`^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$`),
+	"ipv6":         regexp.MustCompile(`(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))`),
+	"uuid":         regexp.MustCompile(`^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$`),
+	//   - "uri": A universal resource identifier (URI), according to RFC3986.
+	//   - "uri-reference": New in draft 6 A URI Reference (either a URI or a relative-reference), according to RFC3986, section 4.1.
+	//   - "iri": New in draft 7 The internationalized equivalent of a “uri”, according to RFC3987.
+	//   - "iri-reference": New in draft 7 The internationalized equivalent of a “uri-reference”, according to RFC3987
+	//   - "uri-template": New in draft 6 A URI Template (of any level) according to RFC6570. If you don’t already know what a URI Template is, you probably don’t need this value.
+	"json-pointer": regexp.MustCompile(`(/(([^/~])|(~[01]))*)`),
+	//   - "relative-json-pointer": New in draft 7 A relative JSON pointer.
+	//   - "regex": New in draft 7 A regular expression, which should be valid according to the ECMA 262 dialect.
+}
+
+// Returns the name for the reference type or nil if its not named
+func getName(named *Reference, hasRef HasReference) *string {
+	if named == nil || hasRef == nil || named.Ref == "" {
+		return nil
+	}
+	name := strings.TrimPrefix(named.Ref, hasRef.GetReferencePrefix())
+	return &name
 }
 
 // A utility function for all the *any fields in the api types.

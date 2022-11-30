@@ -11,8 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-type TaskParams struct {
-	ID int `json:"id"`
+type TaskPath struct {
+	ID int `json:"id" api:"min=1"`
 }
 type Task struct {
 	ID     int        `json:"id"`
@@ -21,7 +21,7 @@ type Task struct {
 	DoneAt *time.Time `json:"doneAt,omitempty" api:"desc=When the task was marked done."`
 }
 type AuthRequest struct {
-	ID       string `json:"id" api:"desc=The email/username of the user to authenticate."`
+	ID       string `json:"id" api:"desc=The email/username of the user to authenticate.,format=email"`
 	Password string `json:"password"`
 }
 type AuthResult struct {
@@ -39,8 +39,6 @@ func main() {
 	site.Open.AddSecurity("bearer", &api.Security{
 		Type:         api.SecurityTypeHTTP,
 		Description:  "Authentication with a 'Bearer {token}' in the Authorization header.",
-		Name:         "Authorization",
-		In:           api.ParameterInHeader,
 		Scheme:       "bearer",
 		BearerFormat: "JWT",
 	})
@@ -58,11 +56,12 @@ func main() {
 		Format:      "date-time",
 	})
 
+	site.EnableValidation(true)
 	site.Route("/task", func(r rez.Router) {
 		r.Use(authMiddleware)
 		r.UpdatePath("/{id}", api.Path{Summary: "Operations on a specific task"})
 		r.UpdateOperations(api.Operation{Tags: []string{"Task"}})
-		r.DefineParam(TaskParams{})
+		r.DefinePath(TaskPath{})
 
 		r.Get("/{id}", getTask, api.Operation{Summary: "Get task by id"})
 		r.Delete("/{id}", deleteTask, api.Operation{Summary: "Delete task by id"})
@@ -71,6 +70,7 @@ func main() {
 		r.UpdatePath("/auth", api.Path{Summary: "Operations for authentication"})
 		r.UpdateOperations(api.Operation{Tags: []string{"Authentication"}})
 		r.DefineBody(AuthRequest{})
+		r.SetValidationOptions("", rez.ValidationOptions{EnforceFormat: true})
 
 		r.Post("/auth", authLogin, api.Operation{Summary: "Login"})
 		r.With(authMiddleware).Get("/auth", authGet, api.Operation{Summary: "Get current session"})
@@ -83,15 +83,15 @@ func main() {
 	site.Listen(":3000")
 }
 
-func getTask(params TaskParams) (*Task, *rez.NotFound[string]) {
+func getTask(params TaskPath) (*Task, *rez.NotFound[string]) {
 	if params.ID == 0 {
-		return nil, &rez.NotFound[string]{}
+		return nil, rez.NewNotFound("Task not found")
 	}
 	return &Task{ID: params.ID, Name: "New Task"}, nil
 }
-func deleteTask(params TaskParams) *rez.NotFound[string] {
+func deleteTask(params TaskPath) *rez.NotFound[string] {
 	if params.ID == 0 {
-		return &rez.NotFound[string]{}
+		return rez.NewNotFound("Task not found")
 	}
 	return nil
 }
@@ -102,7 +102,7 @@ func authGet(token JWT) (*AuthResult, *rez.Unauthorized[string]) {
 	return &AuthResult{Token: string(token)}, nil
 }
 func authLogout() (*rez.OK[string], *rez.Unauthorized[string]) {
-	return &rez.OK[string]{Result: "OK"}, nil
+	return rez.NewOK("OK"), nil
 }
 
 // Middleware which also updates the operations it's applied to.
@@ -115,18 +115,16 @@ func (am AuthMiddleware) APIOperationUpdate(op *api.Operation) {
 	op.Security = append(op.Security, map[string][]string{"bearer": {}})
 }
 
+var bearerRegex *regexp.Regexp = regexp.MustCompile(`^[Bb]earer (.+)$`)
+
 var authMiddleware AuthMiddleware = func(r *http.Request, scope *deps.Scope, router rez.Router, next rez.MiddlewareNext) *rez.Unauthorized[string] {
-	bearer, err := regexp.Compile(`^[Bb]earer (.+)$`)
-	if err != nil {
-		return &rez.Unauthorized[string]{}
-	}
-	matches := bearer.FindStringSubmatch(r.Header.Get("Authorization"))
+	matches := bearerRegex.FindStringSubmatch(r.Header.Get("Authorization"))
 	if len(matches) < 2 {
-		return &rez.Unauthorized[string]{}
+		return rez.NewUnauthorized("")
 	}
 	token := JWT(matches[1])
 	if token == "" {
-		return &rez.Unauthorized[string]{}
+		return rez.NewUnauthorized("")
 	}
 	deps.SetScoped(scope, &token)
 	next()

@@ -18,7 +18,7 @@ site := rez.New(chi.NewRouter())
 // /echo?message=HelloWorld!
 site.Get("/echo", func(q rez.Query[Echo]) (*Echo, *rez.NotFound[string]) {
   if q.Value.Message == "" {
-    return nil, &rez.NotFound[string]{Result: "message is required"}
+    return nil, rez.NewNotFound("message is required")
   }
   return &q.Value, nil
 })
@@ -37,17 +37,20 @@ Dependency injection is used to pass arguments to a middleware or route function
 - `http.ResponseWriter`: The outgoing response.
 - `http.Request`: The incoming request.
 - `rez.Router`: The reference to the router where the middleware was used or the route was defined on.
-- `rez.Param[P]`: A generic wrapper which holds the struct that is parsed from the path parameters. If the path is `/task/{taskID}` and the struct is `type TaskParams struct { TaskID int }` the `TaskID` property will be populated from the value in the URL.
+- `rez.Path[P]`: A generic wrapper which holds the struct that is parsed from the path parameters. If the path is `/task/{taskID}` and the struct is `type TaskPath struct { TaskID int }` the `TaskID` property will be populated from the value in the URL.
 - `rez.Query[Q]`: A generic wrapper which holds the struct that is parsed from the query string. If the url is `?message=Hi&times=4` and the struct is `type MyQuery struct { Message string, Times int }` the Message and Times fields will be populated from the query string.
 - `rez.Header[H]`: A generic wrapper which holds the struct that is parsed from the headers. 
 - `rez.Body[B]`: A generic wrapper which holds the type that is parsed from the request body.
 - `rez.Request[B, P, Q]`: A generic wrapper which holds the body, params, and query structs that are to be parsed from the request.
+- `rez.Validator`: A validator for the route or middleware.
+- `api.Operation`: The operation (route only).
+- `rez.MiddlewareNext`: Invoke the next handler (middleware only).
 
 There are a few other methods to get other injectable values.
 1. Use `rez.Site.Scope` to set global values and providers.
 2. Implement `rez.Injectable`.
 3. Use `rez.Router.DefineBody(bodies...)` to define types that will only be used as arguments that should come from the request body.
-4. Use `rez.Router.DefineParam(params...)` to define types that will only be used as arguments that should come from the request path parameters.
+4. Use `rez.Router.DefinePath(paths...)` to define types that will only be used as arguments that should come from the request path parameters.
 5. Use `rez.Router.DefineQuery(queries...)` to define types that will only be used as arguments that should come from the request query parameters.
 6. Use `rez.Router.DefineHeader(headers...)` to define types that will only be used as arguments that should come from the request headers.
 7. Use `*deps.Scope` as an argument in middleware and `Set` or `Provide` other values that the following handlers will be able to receive.
@@ -64,7 +67,7 @@ Example:
 func authMiddleware(next rez.MiddlewareNext, r *http.Request) *rez.Unauthorized[string] {
   auth := r.Header.Get("Authorization")
   if auth == "" {
-    return &rez.Unauthorized[string]{Result: "No access"}
+    return rez.NewUnauthorized("No access")
   }
   next()
   return nil
@@ -102,7 +105,7 @@ func (auth AuthMiddleware) APIOperationUpdate(op *Operation) {
 
 var authMiddleware AuthMiddleware = func(s *deps.Scope, next rez.MiddlewareNext, q rez.Query[Auth]) *rez.Unauthorized[string] {
   if q.Value.Token == "" {
-    return &rez.Unauthorized[string]{Result: "No access"}
+    return rez.NewUnauthorized("No access")
   }
   s.Set(q.Value)
   next()
@@ -116,7 +119,7 @@ func echoToken(token Auth) Auth {
 site.Open.AddSecurity("queryAuth", &api.Security{
   Type:         api.SecurityTypeApiKey,
   Name:         "token",
-  In:           api.ParameterInHQuery,
+  In:           api.ParameterInQuery,
 })
 site.Use(authMiddleware)
 site.Get("/token", echoToken)

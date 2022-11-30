@@ -27,6 +27,8 @@ type HasStatus interface {
 
 // Router with OpenAPI integration and dependency injection
 type Router interface {
+	ValidationProvider
+
 	// The internal chi.Router
 	Chi() chi.Router
 
@@ -39,6 +41,13 @@ type Router interface {
 	// Handles the given error if its a HandledError, is handled by the error handler, or is handled with default behavior.
 	HandleError(err error, response http.ResponseWriter, request *http.Request, scope *deps.Scope)
 
+	// Enables or disables validation for all routes in this router or sub routers created after this is set.
+	// By default validation is not enabled.
+	EnableValidation(enabled bool)
+
+	// Sets the validation options for the type or value's type.
+	SetValidationOptions(valueOrType any, options ValidationOptions)
+
 	// Adds the types of the given values as injectable request bodies. This avoids
 	// the necessity of rez.Body or rez.Request. If any of the values/types
 	// have already been defined this will cause a panic.
@@ -47,7 +56,7 @@ type Router interface {
 	// Adds the types of the given values as injectable parameters. This avoids
 	// the necessity of rez.Param or rez.Request. If any of the values/types
 	// have already been defined this will cause a panic.
-	DefineParam(params ...any)
+	DefinePath(params ...any)
 
 	// Adds the types of the given values as injectable query parameters. This avoids
 	// the necessity of rez.Query or rez.Request. If any of the values/types

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -369,6 +370,7 @@ func (build *Builder) GetSchema(typ reflect.Type) *Schema {
 // that a schema can only be referenced and not directly modified.
 func (build *Builder) setSchema(typ reflect.Type, s *Schema) {
 	s.named = &Reference{} // Ref is built later to avoid collisions
+	s.typ = typ
 	build.schemas[typ] = s
 }
 
@@ -437,9 +439,10 @@ func (build *Builder) BuildSchema(typ reflect.Type, addToDocument bool) *Schema 
 	case reflect.Interface:
 		// No type
 	case reflect.Array:
+		len := typ.Len()
 		s.Type = MergeValue(s.Type, DataTypeArray)
-		s.MinItems = MergeValue(s.MinItems, typ.Len())
-		s.MaxItems = MergeValue(s.MaxItems, typ.Len())
+		s.MinItems = MergeValue(s.MinItems, &len)
+		s.MaxItems = MergeValue(s.MaxItems, len)
 		s.Items = MergeValue(s.Items, build.GetSchema(typ.Elem()))
 	case reflect.Slice:
 		s.Type = MergeValue(s.Type, DataTypeArray)
@@ -483,7 +486,7 @@ func (build *Builder) makeNullable(typ reflect.Type, s *Schema) *Schema {
 	if s.named != nil {
 		s = &Schema{
 			OneOf: []Schema{
-				{Reference: s.named},
+				*s.AsReference(),
 				{Type: DataTypeNull},
 			},
 		}
@@ -524,7 +527,7 @@ func (build *Builder) addProperties(objectSchema *Schema, parentOptional bool, t
 
 		// A field is required if its not nullable and there is no omitempty or required is specified in the api tag.
 
-		property, optional, skip := getJSONOptions(field)
+		property, optional, skip := GetJSONOptions(field)
 		if skip {
 			continue
 		}
@@ -556,18 +559,13 @@ func (build *Builder) addProperties(objectSchema *Schema, parentOptional bool, t
 				// If its a named schema, wrap it
 				if propertySchema.named != nil {
 					propertySchema = &Schema{
-						AllOf: []Schema{{Reference: propertySchema.named}},
+						AllOf: []Schema{*propertySchema.AsReference()},
 					}
 				}
 				ApplyOptions(propertySchema, api)
 			}
 
-			propertySchemaFinal := propertySchema
-			if propertySchemaFinal.named != nil {
-				propertySchemaFinal = &Schema{
-					Reference: propertySchemaFinal.named,
-				}
-			}
+			propertySchemaFinal := propertySchema.AsReference()
 
 			objectSchema.Properties[property] = *propertySchemaFinal
 
@@ -593,7 +591,7 @@ func getConcrete(typ reflect.Type) reflect.Type {
 }
 
 // Gets the json options from the given struct field.
-func getJSONOptions(field reflect.StructField) (property string, optional bool, skip bool) {
+func GetJSONOptions(field reflect.StructField) (property string, optional bool, skip bool) {
 	property = field.Name
 	optional = false
 	skip = false
@@ -671,11 +669,15 @@ func ApplyOptions(s *Schema, tag string) {
 			value = keyValue[1]
 		}
 
+		var parseInt *int
+		var parseBool *bool
+
+		defaultInt := 0
+
 		switch strings.ToLower(key) {
 		case "title":
 			s.Title = value
 		case "desc", "description":
-
 			s.Description = value
 		case "format":
 			s.Format = value
@@ -700,23 +702,42 @@ func ApplyOptions(s *Schema, tag string) {
 				}
 			}
 		case "minlength":
-			s.MinLength, _ = strconv.Atoi(value)
+			s.MinLength = &defaultInt
+			parseInt = s.MinLength
 		case "maxlength":
-			s.MaxLength, _ = strconv.Atoi(value)
+			parseInt = &s.MaxLength
 		case "minitems":
-			s.MinItems, _ = strconv.Atoi(value)
+			s.MinItems = &defaultInt
+			parseInt = s.MinItems
 		case "maxitems":
-			s.MaxItems, _ = strconv.Atoi(value)
+			parseInt = &s.MaxItems
 		case "multipleof":
-			s.MultipleOf, _ = strconv.Atoi(value)
+			parseInt = &s.MultipleOf
 		case "maximum", "max":
-			s.Maximum, _ = strconv.Atoi(value)
+			s.Maximum = &defaultInt
+			parseInt = s.Maximum
 		case "minimum", "min":
-			s.Minimum, _ = strconv.Atoi(value)
+			s.Minimum = &defaultInt
+			parseInt = s.Minimum
 		case "exclusivemaximum", "exclusivemax":
-			s.ExclusiveMaximum, _ = strconv.ParseBool(value)
+			parseBool = &s.ExclusiveMaximum
 		case "exclusiveminimum", "exclusivemin":
-			s.ExclusiveMinimum, _ = strconv.ParseBool(value)
+			parseBool = &s.ExclusiveMinimum
+		}
+
+		if parseInt != nil {
+			parsed, err := strconv.Atoi(value)
+			if err != nil {
+				panic(fmt.Sprintf("Error parsing %s from tag: %s", key, value))
+			}
+			*parseInt = parsed
+		}
+		if parseBool != nil {
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				panic(fmt.Sprintf("Error parsing %s from tag: %s", key, value))
+			}
+			*parseBool = parsed
 		}
 	}
 }
