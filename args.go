@@ -183,7 +183,7 @@ func ValidateInjectable(inj Injectable, scope *deps.Scope) error {
 
 	inj.APIValidate(op, v)
 
-	if len(*v.Validations) > 0 {
+	if v.HasFailures() {
 		return v
 	}
 	return nil

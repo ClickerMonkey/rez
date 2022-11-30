@@ -131,7 +131,22 @@ Function arguments are inspected to determine what path parameters, query parame
 
 ## Validation
 
-Not yet implemented in **rez** outside of normal JSON Unmarshalling logic.
+Validation in rez is done if enabled and only for certain schema fields and after the data is marshalled into values. So any invalid type errors will not be triggered by the validation but when the JSON is parsed. General validation options can be applied per type, validation can be enabled or disabled for any router, and types can have custom validation code that takes over the validation process or runs after the validation process. If validation fails the error is returned to the user. How those validations are sent to the user can be controlled by calling `rez.Router.SetErrorHandler`.
+
+- `rez.Router.EnabledValidation(bool)` enables or disables validation in this router and any sub-routers created after this call. By default validation is not enabled.
+- `rez.Router.SetValidationOptions(any,ValidationOptions)` sets the validation options for the given type, which controls if validation is skipped, if format is enforced, or if specifying deprecated values triggers a validation error.
+- `rez.CanValidateFull` if a type implements this it handles all validation logic.
+- `rez.CanValidatePost` if a type implements this it will do additional validation logic after other validation logic has been done.
+- `rez.Injectable` if a type implements this it must implement an `APIValidate` method.
+
+The following schema fields are used during validation:
+- `MultipleOf`, `Maximum`, `Minimum`, `ExclusiveMaximum`, `ExclusiveMinimum` are used for any int or float types.
+- `MaxLength`, `MinLength` are used for string types.
+- `Deprecated`, `Nullable`, `Pattern`, `Format`, `Enum`, `OneOf`, `AllOf`, `AnyOf`, `Not` are used for all types.
+- `MinItems`, `MaxItems`, `Items`, `UniqueItems` are used for array and slice types.
+- `MinProperties`, `MaxProperties`, `AdditionalProperties` are used for map types.
+- `Properties`, `Required` are used for struct types.
+
 
 ## Documentation
 
@@ -261,6 +276,26 @@ func (GetTask) APIOperationUpdate(op *api.Operation) {
   - `AddResponse(code, api.Response)` adds the response to the operation template.
   - `HandleFunc(pattern, fn, ...api.Operation) *api.Path` can accept zero or more operation definitions to merge into the operations defined at this path - and the reference to the path at the pattern is returned.
   - `"method"(pattern, fn, ...api.Operation) *api.Operation` is a method with the name of any of the HTTP methods which adds this method to the path with the pattern and merges in any given operations with the operation template and then returns the reference to the final built operation for this route.
+- Struct tags. Fields on a struct can specify the `api` tag which is a comma-delimited list of key=value or flags. If you need to use a comma in a value you can escape it like `\,`.
+  - `title` ex: `api:"title=A person's address"` (see `api.Schema.Title`)
+  - `desc` or `description` ex: `api:"desc=The ten digit home phone number."` (see `api.Schema.Description`)
+  - `format` ex: `api:"format=email"` (see `api.Schema.Format`)
+  - `pattern` ex: `api:"pattern=\d+"` (see `api.Schema.Pattern`)
+  - `deprecated` ex: `api:"deprecated"` (see `api.Schema.Deprecated`)
+  - `required` ex: `api:"required"` (see `api.Schema.Nullable`)
+  - `null` or `nullable` ex: `api:"null"` (see `api.Schema.Nullable`)
+  - `readonly` ex: `api:"readonly"` (see `api.Schema.ReadOnly`)
+  - `writeonly` ex: `api:"writeonly"` (see `api.Schema.WriteOnly`)
+  - `enum` ex: `api:"enum=1|2|3"` (see `api.Schema.Enum`)
+  - `minlength` ex: `api:"minlength=6"` (see `api.Schema.MinLength`)
+  - `maxlength` ex: `api:"maxlength=6"` (see `api.Schema.MaxLength`)
+  - `minitems` ex: `api:"minitems=6"` (see `api.Schema.MinItems`)
+  - `maxitems` ex: `api:"maxitems=6"` (see `api.Schema.MaxItems`)
+  - `multipleof` ex: `api:"multipleof=2"` (see `api.Schema.MultipleOf`)
+  - `min` or `minimum` ex: `api:"min=1"` (see `api.Schema.Minimum`)
+  - `max` or `maximum` ex: `api:"max=1"` (see `api.Schema.Maximum`)
+  - `exclusivemaximum` or `exclusivemax` ex: `api:"exclusivemax=true"` (see `api.Schema.ExclusiveMaximum`)
+  - `exclusiveminimum` or `exclusivemin` ex: `api:"exclusivemin"` (see `api.Schema.ExclusiveMinimum`)
 
 ## Site
 

@@ -97,6 +97,16 @@ func (v Validator) Detach() Validator {
 	}
 }
 
+// Returns true if the validator has failures.
+func (v Validator) HasFailures() bool {
+	return len(*v.Validations) > 0
+}
+
+// Returns true if the validator has no failures.
+func (v Validator) IsValid() bool {
+	return len(*v.Validations) == 0
+}
+
 // Attaches a validtor to this validator by adding its validations to this one.
 func (v *Validator) Attach(detached Validator) {
 	*v.Validations = append(*v.Validations, *detached.Validations...)

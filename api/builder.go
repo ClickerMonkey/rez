@@ -733,6 +733,9 @@ func ApplyOptions(s *Schema, tag string) {
 			*parseInt = parsed
 		}
 		if parseBool != nil {
+			if value == key {
+				value = "true"
+			}
 			parsed, err := strconv.ParseBool(value)
 			if err != nil {
 				panic(fmt.Sprintf("Error parsing %s from tag: %s", key, value))
