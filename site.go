@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"reflect"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -858,6 +859,16 @@ func (site *Site) PrintPaths() {
 		"GET", "POST", "PUT", "DELETE",
 		"PATCH", "HEAD", "OPTIONS", "TRACE",
 	}
+	methodMap := map[string]int{
+		"GET":     8,
+		"POST":    7,
+		"PUT":     6,
+		"DELETE":  5,
+		"PATCH":   4,
+		"HEAD":    3,
+		"OPTIONS": 2,
+		"TRACE":   1,
+	}
 
 	includeAbout := false
 
@@ -886,6 +897,17 @@ func (site *Site) PrintPaths() {
 			})
 		}
 	}
+
+	sort.Slice(paths, func(i, j int) bool {
+		a := paths[i]
+		b := paths[j]
+
+		if a[1] != b[1] {
+			return a[1] < b[1]
+		}
+
+		return methodMap[b[0]] < methodMap[a[0]]
+	})
 
 	headers := []string{"Method", "URL"}
 	if includeAbout {
