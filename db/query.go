@@ -7,26 +7,17 @@ import (
 	"strings"
 )
 
-// A type that can receive rows from a query.
-type QueryResult[R any] interface {
-	Add(result R) bool
+// An interface that covers a connection or transaction
+type Queryable interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// A QueryResult for a slice.
-type QuerySlice[R any] struct {
-	Slice *[]R
-	Max   int
-}
-
-var _ QueryResult[int] = &QuerySlice[int]{}
-
-func (st *QuerySlice[R]) Add(result R) bool {
-	if st.Max > 0 && len(*st.Slice) >= st.Max {
-		return false
-	}
-	*st.Slice = append(*st.Slice, result)
-	return true
-}
+var _ Queryable = &sql.Tx{}
+var _ Queryable = &sql.DB{}
+var _ Queryable = &sql.Conn{}
 
 // A query to run against a database. For stored procedures the
 // query is the stored procedure name. If Prepared is true the
@@ -50,7 +41,7 @@ type Query[R any] struct {
 	Create func() R
 	// Where to place the rows received. The presense of this field
 	// indicates that rows should be requested and parsed.
-	Results QueryResult[R]
+	Results func(result R, index int) bool
 	// Where to place a single result row. The presense of this field
 	// indicates that a row should be requested and parsed.
 	Result *R
@@ -58,8 +49,10 @@ type Query[R any] struct {
 	RowsAffected int64
 	// The ID of the last inserted record on the last query run.
 	LastID int64
+	// The columns returned from a query
+	Columns []*sql.ColumnType
 
-	columns      []func(row reflect.Value) any
+	handlers     []func(row reflect.Value) any
 	columnsQuery string
 	stmt         *sql.Stmt
 	stmtQuery    string
@@ -68,41 +61,75 @@ type Query[R any] struct {
 var _ Runnable = &Query[string]{}
 
 // Preps the query for receiving rows with the given columns
-func (q *Query[R]) SetColumns(columns []string) {
-	columnMap := make(map[string]int, len(columns))
-	for i, c := range columns {
-		columnMap[strings.ToLower(c)] = i
+func (q *Query[R]) SetColumns(columns []*sql.ColumnType) {
+	q.Columns = columns
+	q.handlers = make([]func(row reflect.Value) any, len(columns))
+
+	var rowInstance R
+	rootType := reflect.TypeOf(rowInstance)
+	for rootType.Kind() == reflect.Pointer {
+		rootType = rootType.Elem()
 	}
 
-	q.columns = make([]func(row reflect.Value) any, len(columns))
+	if rootType.Kind() == reflect.Struct {
+		columnMap := make(map[string]int, len(columns))
+		for i, c := range columns {
+			columnMap[strings.ToLower(c.Name())] = i
+		}
 
-	var iterateStruct func(s reflect.Type, fieldIndexes []int)
+		var iterateStruct func(s reflect.Type, fieldIndexes []int)
 
-	iterateStruct = func(s reflect.Type, fieldIndexes []int) {
-		for fieldIndex := 0; fieldIndex < s.NumField(); fieldIndex++ {
-			field := s.Field(fieldIndex)
-			indexes := append(fieldIndexes, fieldIndex)
-			if field.Anonymous {
-				iterateStruct(field.Type, indexes)
-			} else {
-				name := field.Name
-				if db := field.Tag.Get("db"); db != "" {
-					name = db
-				}
-				key := strings.ToLower(name)
-				if i, exists := columnMap[key]; exists {
-					q.columns[i] = func(row reflect.Value) any {
-						return row.FieldByIndex(indexes).Interface()
+		iterateStruct = func(s reflect.Type, fieldIndexes []int) {
+			for fieldIndex := 0; fieldIndex < s.NumField(); fieldIndex++ {
+				field := s.Field(fieldIndex)
+				indexes := append(fieldIndexes, fieldIndex)
+				if field.Anonymous {
+					iterateStruct(field.Type, indexes)
+				} else {
+					name := field.Name
+					if db := field.Tag.Get("db"); db != "" {
+						name = db
+					}
+					key := strings.ToLower(name)
+					if i, exists := columnMap[key]; exists {
+						q.handlers[i] = q.handlerForIndex(indexes)
 					}
 				}
 			}
 		}
-	}
 
-	var rowInstance R
-	rootType := reflect.TypeOf(rowInstance)
-	if rootType.Kind() == reflect.Struct {
 		iterateStruct(rootType, []int{})
+	}
+	if rootType.Kind() == reflect.Map {
+		for i, c := range columns {
+			q.handlers[i] = q.handlerForMapColumn(c)
+		}
+	}
+}
+
+func (q Query[R]) handlerForIndex(indexes []int) func(row reflect.Value) any {
+	return func(row reflect.Value) any {
+		return row.FieldByIndex(indexes).Interface()
+	}
+}
+
+func (q Query[R]) handlerForMapColumn(col *sql.ColumnType) func(row reflect.Value) any {
+	mapIndex := reflect.ValueOf(col.Name())
+	mapValueType := col.ScanType()
+	mapValueTypePtr := reflect.PointerTo(mapValueType)
+	nullable, _ := col.Nullable()
+
+	return func(row reflect.Value) any {
+		val := reflect.New(mapValueType)
+		if nullable {
+			ptr := reflect.New(mapValueTypePtr)
+			ptr.Elem().Set(val)
+			val = ptr
+		}
+
+		row.Elem().SetMapIndex(mapIndex, val)
+
+		return val.Interface()
 	}
 }
 
@@ -110,12 +137,13 @@ func (q *Query[R]) SetColumns(columns []string) {
 // columns prepped.
 func (q Query[R]) GetValues(row *R) []any {
 	r := reflect.ValueOf(row)
-	columns := make([]any, len(q.columns))
+	kind := r.Elem().Kind()
+	columns := make([]any, len(q.handlers))
 
-	if r.Elem().Kind() != reflect.Struct {
+	if kind != reflect.Struct && kind != reflect.Map {
 		columns[0] = row
 	} else {
-		for i, handler := range q.columns {
+		for i, handler := range q.handlers {
 			if handler == nil {
 				columns[i] = any(nil)
 			} else {
@@ -153,9 +181,9 @@ func (q *Query[R]) NewRow() *R {
 }
 
 // Runs the query against the given context and connection.
-func (q *Query[R]) Run(ctx context.Context, conn *sql.Conn) error {
+func (q *Query[R]) Run(ctx context.Context, able Queryable) error {
 	if q.Prepared && (q.stmt == nil || q.stmtQuery != q.Query) {
-		stmt, err := conn.PrepareContext(ctx, q.Query)
+		stmt, err := able.PrepareContext(ctx, q.Query)
 		if err != nil {
 			return err
 		}
@@ -169,15 +197,15 @@ func (q *Query[R]) Run(ctx context.Context, conn *sql.Conn) error {
 		if q.stmt != nil {
 			rows, err = q.stmt.QueryContext(ctx, q.GetArgs()...)
 		} else {
-			rows, err = conn.QueryContext(ctx, q.Query, q.GetArgs()...)
+			rows, err = able.QueryContext(ctx, q.Query, q.GetArgs()...)
 		}
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 
-		if q.columns == nil || q.columnsQuery != q.Query {
-			cols, err := rows.Columns()
+		if q.handlers == nil || q.columnsQuery != q.Query {
+			cols, err := rows.ColumnTypes()
 			if err != nil {
 				return err
 			}
@@ -185,19 +213,29 @@ func (q *Query[R]) Run(ctx context.Context, conn *sql.Conn) error {
 			q.columnsQuery = q.Query
 		}
 
-		for rows.Next() {
-			row := q.NewRow()
-			err = rows.Scan(q.GetValues(row)...)
-			if err != nil {
-				return err
-			}
-			if q.Results != nil {
-				if !q.Results.Add(*row) {
+		if q.Results != nil {
+			rowIndex := 0
+			for rows.Next() {
+				row := q.NewRow()
+				err = rows.Scan(q.GetValues(row)...)
+				if err != nil {
+					return err
+				}
+				if !q.Results(*row, rowIndex) {
 					break
 				}
-			} else {
+				rowIndex++
+			}
+		} else {
+			if rows.Next() {
+				row := q.NewRow()
+				err = rows.Scan(q.GetValues(row)...)
+				if err != nil {
+					return err
+				}
 				*q.Result = *row
-				break
+			} else {
+				q.Result = nil
 			}
 		}
 	} else {
@@ -206,7 +244,7 @@ func (q *Query[R]) Run(ctx context.Context, conn *sql.Conn) error {
 		if q.stmt != nil {
 			result, err = q.stmt.ExecContext(ctx, q.GetArgs()...)
 		} else {
-			result, err = conn.ExecContext(ctx, q.Query, q.GetArgs()...)
+			result, err = able.ExecContext(ctx, q.Query, q.GetArgs()...)
 		}
 		if err != nil {
 			return err

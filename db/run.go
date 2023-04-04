@@ -2,19 +2,21 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"sync"
 )
 
 // A type which runs a query on a given connection.
 type Runnable interface {
-	Run(ctx context.Context, conn *sql.Conn) error
+	Run(ctx context.Context, able Queryable) error
 }
 
+// A runner is a function which processes many runnable interface
+type Runner func(many []Runnable, ctx context.Context, able Queryable) error
+
 // Runs a list of queries sequentially
-func RunSequential(many []Runnable, ctx context.Context, conn *sql.Conn) error {
+func RunSequential(many []Runnable, ctx context.Context, able Queryable) error {
 	for _, run := range many {
-		err := run.Run(ctx, conn)
+		err := run.Run(ctx, able)
 		if err != nil {
 			return err
 		}
@@ -22,9 +24,11 @@ func RunSequential(many []Runnable, ctx context.Context, conn *sql.Conn) error {
 	return nil
 }
 
+var _ Runner = RunSequential
+
 // Runs a list of queries at the same time. If any of them errors it will
 // try to stop all other queries and return as soon as possible.
-func RunConcurrently(many []Runnable, ctx context.Context, conn *sql.Conn) error {
+func RunConcurrently(many []Runnable, ctx context.Context, able Queryable) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	lastError := make(chan error)
 	group := sync.WaitGroup{}
@@ -33,7 +37,7 @@ func RunConcurrently(many []Runnable, ctx context.Context, conn *sql.Conn) error
 		group.Add(1)
 		go func(run Runnable) {
 			defer group.Done()
-			err := run.Run(cancelCtx, conn)
+			err := run.Run(cancelCtx, able)
 			if err != nil {
 				cancel()
 				lastError <- err
@@ -52,9 +56,18 @@ func RunConcurrently(many []Runnable, ctx context.Context, conn *sql.Conn) error
 	return nil
 }
 
+var _ Runner = RunConcurrently
+
+// Creates a pooled runner
+func NewPooledRunner(poolSize int) Runner {
+	return func(many []Runnable, ctx context.Context, able Queryable) error {
+		return RunPooled(many, ctx, able, poolSize)
+	}
+}
+
 // Runs a list of queries at the same time. If any of them errors it will
 // try to stop all other queries and return as soon as possible.
-func RunPooled(many []Runnable, ctx context.Context, conn *sql.Conn, poolSize int) error {
+func RunPooled(many []Runnable, ctx context.Context, able Queryable, poolSize int) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	lastError := make(chan error)
 	group := sync.WaitGroup{}
@@ -69,7 +82,7 @@ func RunPooled(many []Runnable, ctx context.Context, conn *sql.Conn, poolSize in
 		go func(run Runnable) {
 			defer group.Done()
 			<-jobs
-			err := run.Run(cancelCtx, conn)
+			err := run.Run(cancelCtx, able)
 			if err != nil {
 				cancel()
 				lastError <- err
@@ -91,3 +104,5 @@ func RunPooled(many []Runnable, ctx context.Context, conn *sql.Conn, poolSize in
 
 	return nil
 }
+
+var _ Runner = NewPooledRunner(10)

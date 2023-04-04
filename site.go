@@ -275,10 +275,6 @@ func (site *Site) Route(pattern string, fn func(r Router)) Router {
 	return c
 }
 
-var hasStatusType = deps.TypeOf[HasStatus]()
-var injectableType = deps.TypeOf[Injectable]()
-var errorType = deps.TypeOf[error]()
-
 func (site *Site) getOperation(fn any) api.Operation {
 	fnType := reflect.TypeOf(fn)
 	if fnType.Kind() != reflect.Func {
@@ -293,128 +289,148 @@ func (site *Site) getOperation(fn any) api.Operation {
 	op := api.Operation{}
 
 	for i := 0; i < fnType.NumIn(); i++ {
-		argType := fnType.In(i)
-		concrete, ptr := getConcretePointer(argType)
-
-		var bodyType, pathType, queryType, headerType reflect.Type
-
-		if ptr.Implements(injectableType) {
-			argInstance := reflect.New(concrete).Interface()
-			if has, ok := argInstance.(Injectable); ok {
-				requestTypes := has.APIRequestTypes()
-				bodyType = requestTypes.Body
-				pathType = requestTypes.Path
-				queryType = requestTypes.Query
-				headerType = requestTypes.Header
-			}
-		}
-
-		if injectType, ok := site.injectTypes[concrete]; ok {
-			switch injectType {
-			case injectTypeBody:
-				bodyType = concrete
-			case injectTypeQuery:
-				queryType = concrete
-			case injectTypePath:
-				pathType = concrete
-			case injectTypeHeader:
-				headerType = concrete
-			}
-		}
-
-		if bodyType != nil {
-			bodySchema := site.Open.GetSchema(bodyType)
-			if bodySchema != nil {
-				if op.RequestBody == nil {
-					op.RequestBody = &api.RequestBody{}
-				}
-				op.RequestBody.Required = true
-				op.RequestBody.Description = api.GetDescription(bodyType)
-				if site.ServeJSON {
-					if op.RequestBody.Content == nil {
-						op.RequestBody.Content = api.Contents{}
-					}
-					op.RequestBody.Content[api.ContentTypeJSON] = &api.MediaType{
-						Schema:  bodySchema,
-						Example: api.GetExample(bodyType),
-					}
-				}
-				for contentType, content := range op.RequestBody.Content {
-					if content.Examples == nil {
-						content.Examples = api.GetExamples(bodyType, contentType)
-					}
-				}
-			}
-		}
-		if pathType != nil {
-			op.AddParameters(site.Open, api.ParameterInPath, pathType)
-		}
-		if queryType != nil {
-			op.AddParameters(site.Open, api.ParameterInQuery, queryType)
-		}
-		if headerType != nil {
-			op.AddParameters(site.Open, api.ParameterInHeader, headerType)
-		}
+		site.addInputType(&op, fnType.In(i))
 	}
 
 	for i := 0; i < fnType.NumOut(); i++ {
-		out := getConcrete(fnType.Out(i))
-
-		outSchema := site.Open.GetSchema(out)
-		if outSchema == nil {
-			continue
-		}
-		statuses := []int{}
-
-		if out.Implements(hasStatusType) && out.Kind() != reflect.Interface {
-			arg := reflect.New(out).Interface()
-			if hasStatus, ok := arg.(HasStatus); ok {
-				statuses = hasStatus.HTTPStatuses()
-			}
-		}
-		if len(statuses) == 0 && out.Implements(errorType) {
-			statuses = []int{500}
-		}
-		if len(statuses) == 0 {
-			statuses = []int{200}
-		}
-		for _, status := range statuses {
-			key := strconv.Itoa(status)
-			if op.Responses == nil {
-				op.Responses = api.Responses{}
-			}
-			existing := op.Responses[key]
-			if existing == nil {
-				existing = &api.Response{}
-				op.Responses[key] = existing
-			}
-			if existing.Content == nil {
-				existing.Content = api.Contents{}
-			}
-			if existing.Description == "" {
-				existing.Description = api.GetDescription(out)
-			}
-			content := existing.Content[api.ContentTypeJSON]
-			if content == nil {
-				content = &api.MediaType{}
-				existing.Content[api.ContentTypeJSON] = content
-			}
-			if content.Schema != nil {
-				merged := content.Schema.Merge(*outSchema)
-				content.Schema = &merged
-			} else {
-				content.Schema = outSchema
-			}
-		}
-	}
-
-	if op.Responses["200"] == nil {
-		op.Responses["200"] = &api.Response{}
+		site.addOutputType(&op, fnType.Out(i))
 	}
 
 	api.GetOperationUpdate(fn, &op)
 
 	return op
+}
+
+var injectableType = deps.TypeOf[Injectable]()
+
+// Adds the type as an input type for the operation
+func (site *Site) addInputType(op *api.Operation, inputType reflect.Type) bool {
+	concrete, ptr := getConcretePointer(inputType)
+
+	var bodyType, pathType, queryType, headerType reflect.Type
+
+	if ptr.Implements(injectableType) {
+		argInstance := reflect.New(concrete).Interface()
+		if has, ok := argInstance.(Injectable); ok {
+			requestTypes := has.APIRequestTypes()
+			bodyType = requestTypes.Body
+			pathType = requestTypes.Path
+			queryType = requestTypes.Query
+			headerType = requestTypes.Header
+		}
+	}
+
+	if injectType, ok := site.injectTypes[concrete]; ok {
+		switch injectType {
+		case injectTypeBody:
+			bodyType = concrete
+		case injectTypeQuery:
+			queryType = concrete
+		case injectTypePath:
+			pathType = concrete
+		case injectTypeHeader:
+			headerType = concrete
+		}
+	}
+
+	handled := false
+
+	if bodyType != nil {
+		bodySchema := site.Open.GetSchema(bodyType)
+		if bodySchema != nil {
+			if op.RequestBody == nil {
+				op.RequestBody = &api.RequestBody{}
+			}
+			op.RequestBody.Required = true
+			op.RequestBody.Description = api.GetDescription(bodyType)
+			if site.ServeJSON {
+				if op.RequestBody.Content == nil {
+					op.RequestBody.Content = api.Contents{}
+				}
+				op.RequestBody.Content[api.ContentTypeJSON] = &api.MediaType{
+					Schema:  bodySchema,
+					Example: api.GetExample(bodyType),
+				}
+			}
+			for contentType, content := range op.RequestBody.Content {
+				if content.Examples == nil {
+					content.Examples = api.GetExamples(bodyType, contentType)
+				}
+			}
+		}
+		handled = true
+	}
+	if pathType != nil {
+		op.AddParameters(site.Open, api.ParameterInPath, pathType)
+		handled = true
+	}
+	if queryType != nil {
+		op.AddParameters(site.Open, api.ParameterInQuery, queryType)
+		handled = true
+	}
+	if headerType != nil {
+		op.AddParameters(site.Open, api.ParameterInHeader, headerType)
+		handled = true
+	}
+
+	return handled
+}
+
+var hasStatusType = deps.TypeOf[HasStatus]()
+var errorType = deps.TypeOf[error]()
+
+// Adds the type as a response type for the operation
+func (site *Site) addOutputType(op *api.Operation, responseType reflect.Type) bool {
+	out := getConcrete(responseType)
+
+	outSchema := site.Open.GetSchema(out)
+	if outSchema == nil {
+		return false
+	}
+	statuses := []int{}
+
+	if out.Implements(hasStatusType) && out.Kind() != reflect.Interface {
+		arg := reflect.New(out).Interface()
+		if hasStatus, ok := arg.(HasStatus); ok {
+			statuses = hasStatus.HTTPStatuses()
+		}
+	}
+	if len(statuses) == 0 && out.Implements(errorType) {
+		statuses = []int{500}
+	}
+	if len(statuses) == 0 {
+		statuses = []int{200}
+	}
+	for _, status := range statuses {
+		key := strconv.Itoa(status)
+		if op.Responses == nil {
+			op.Responses = api.Responses{}
+		}
+		existing := op.Responses[key]
+		if existing == nil {
+			existing = &api.Response{}
+			op.Responses[key] = existing
+		}
+		if existing.Content == nil {
+			existing.Content = api.Contents{}
+		}
+		if existing.Description == "" {
+			existing.Description = api.GetDescription(out)
+		}
+		content := existing.Content[api.ContentTypeJSON]
+		if content == nil {
+			content = &api.MediaType{}
+			existing.Content[api.ContentTypeJSON] = content
+		}
+		if content.Schema != nil {
+			merged := content.Schema.Merge(*outSchema)
+			content.Schema = &merged
+		} else {
+			content.Schema = outSchema
+		}
+	}
+
+	return true
 }
 
 // Creates a HandlerFunc for the given function and operation.
@@ -494,7 +510,7 @@ func (site *Site) Send(response any, w http.ResponseWriter) error {
 		enc := json.NewEncoder(w)
 		return enc.Encode(response)
 	case strings.Contains(contentType, "text"):
-		data := make([]byte, 0, 256)
+		var data []byte
 		if marshaller, ok := response.(encoding.TextMarshaler); ok {
 			text, err := marshaller.MarshalText()
 			if err != nil {
@@ -633,7 +649,7 @@ func (site *Site) HandleFunc(pattern string, fn any, operations ...api.Operation
 
 // Method and MethodFunc adds routes for `pattern` that matches
 // the `method` HTTP method.
-func (site *Site) MethodFunc(method string, pattern string, fn any, operations ...api.Operation) *api.Operation {
+func (site *Site) MethodFunc(method string, pattern string, fn any, operations ...api.Operation) RouterOperation {
 	path := site.CreatePath(pattern)
 	target := []**api.Operation{nil}
 	switch strings.ToLower(method) {
@@ -656,67 +672,67 @@ func (site *Site) MethodFunc(method string, pattern string, fn any, operations .
 	}
 	site.applyOperations(operations, target)
 	site.router.MethodFunc(method, pattern, site.handle(fn, *target[0]))
-	return *target[0]
+	return SiteOperation{*target[0], site}
 }
 
 func (site *Site) Connect(pattern string, fn any) {
 	site.router.Connect(pattern, site.handle(fn, nil))
 }
 
-func (site *Site) Delete(pattern string, fn any, operations ...api.Operation) *api.Operation {
+func (site *Site) Delete(pattern string, fn any, operations ...api.Operation) RouterOperation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Delete})
 	site.router.Delete(pattern, site.handle(fn, path.Delete))
-	return path.Delete
+	return SiteOperation{path.Delete, site}
 }
 
-func (site *Site) Get(pattern string, fn any, operations ...api.Operation) *api.Operation {
+func (site *Site) Get(pattern string, fn any, operations ...api.Operation) RouterOperation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Get})
 	site.router.Get(pattern, site.handle(fn, path.Get))
-	return path.Get
+	return SiteOperation{path.Get, site}
 }
 
-func (site *Site) Head(pattern string, fn any, operations ...api.Operation) *api.Operation {
+func (site *Site) Head(pattern string, fn any, operations ...api.Operation) RouterOperation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Head})
 	site.router.Head(pattern, site.handle(fn, path.Head))
-	return path.Head
+	return SiteOperation{path.Head, site}
 }
 
-func (site *Site) Options(pattern string, fn any, operations ...api.Operation) *api.Operation {
+func (site *Site) Options(pattern string, fn any, operations ...api.Operation) RouterOperation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Options})
 	site.router.Options(pattern, site.handle(fn, path.Options))
-	return path.Options
+	return SiteOperation{path.Options, site}
 }
 
-func (site *Site) Patch(pattern string, fn any, operations ...api.Operation) *api.Operation {
+func (site *Site) Patch(pattern string, fn any, operations ...api.Operation) RouterOperation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Patch})
 	site.router.Patch(pattern, site.handle(fn, path.Patch))
-	return path.Patch
+	return SiteOperation{path.Patch, site}
 }
 
-func (site *Site) Post(pattern string, fn any, operations ...api.Operation) *api.Operation {
+func (site *Site) Post(pattern string, fn any, operations ...api.Operation) RouterOperation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Post})
 	site.router.Post(pattern, site.handle(fn, path.Post))
-	return path.Post
+	return SiteOperation{path.Post, site}
 }
 
-func (site *Site) Put(pattern string, fn any, operations ...api.Operation) *api.Operation {
+func (site *Site) Put(pattern string, fn any, operations ...api.Operation) RouterOperation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Put})
 	site.router.Put(pattern, site.handle(fn, path.Put))
-	return path.Put
+	return SiteOperation{path.Put, site}
 }
 
-func (site *Site) Trace(pattern string, fn any, operations ...api.Operation) *api.Operation {
+func (site *Site) Trace(pattern string, fn any, operations ...api.Operation) RouterOperation {
 	path := site.CreatePath(pattern)
 	site.applyOperations(operations, []**api.Operation{&path.Trace})
 	site.router.Trace(pattern, site.handle(fn, path.Trace))
-	return path.Trace
+	return SiteOperation{path.Trace, site}
 }
 
 func (site *Site) NotFound(fn any) {
@@ -1022,6 +1038,16 @@ const (
 	injectTypeHeader
 )
 
+func reflectType(x any) reflect.Type {
+	if t, ok := x.(reflect.Type); ok {
+		return t
+	}
+	if v, ok := x.(reflect.Value); ok {
+		return v.Type()
+	}
+	return reflect.TypeOf(x)
+}
+
 func getConcrete(typ reflect.Type) reflect.Type {
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
@@ -1032,4 +1058,32 @@ func getConcrete(typ reflect.Type) reflect.Type {
 func getConcretePointer(typ reflect.Type) (reflect.Type, reflect.Type) {
 	c := getConcrete(typ)
 	return c, reflect.PointerTo(c)
+}
+
+// An operation for a site.
+type SiteOperation struct {
+	operation *api.Operation
+	site      *Site
+}
+
+var _ RouterOperation = SiteOperation{}
+
+func (op SiteOperation) Router() Router {
+	return op.site
+}
+
+func (op SiteOperation) Operation() *api.Operation {
+	return op.operation
+}
+
+func (op SiteOperation) Input(input ...any) {
+	for _, t := range input {
+		op.site.addInputType(op.operation, reflectType(t))
+	}
+}
+
+func (op SiteOperation) Output(output ...any) {
+	for _, t := range output {
+		op.site.addOutputType(op.operation, reflectType(t))
+	}
 }

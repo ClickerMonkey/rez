@@ -151,18 +151,18 @@ type Router interface {
 
 	// Method and MethodFunc adds routes for `pattern` that matches
 	// the `method` HTTP method.
-	MethodFunc(method, pattern string, fn any, operations ...api.Operation) *api.Operation
+	MethodFunc(method, pattern string, fn any, operations ...api.Operation) RouterOperation
 
 	// HTTP-method routing along `pattern`
 	Connect(pattern string, fn any)
-	Delete(pattern string, fn any, operations ...api.Operation) *api.Operation
-	Get(pattern string, fn any, operations ...api.Operation) *api.Operation
-	Head(pattern string, fn any, operations ...api.Operation) *api.Operation
-	Options(pattern string, fn any, operations ...api.Operation) *api.Operation
-	Patch(pattern string, fn any, operations ...api.Operation) *api.Operation
-	Post(pattern string, fn any, operations ...api.Operation) *api.Operation
-	Put(pattern string, fn any, operations ...api.Operation) *api.Operation
-	Trace(pattern string, fn any, operations ...api.Operation) *api.Operation
+	Delete(pattern string, fn any, operations ...api.Operation) RouterOperation
+	Get(pattern string, fn any, operations ...api.Operation) RouterOperation
+	Head(pattern string, fn any, operations ...api.Operation) RouterOperation
+	Options(pattern string, fn any, operations ...api.Operation) RouterOperation
+	Patch(pattern string, fn any, operations ...api.Operation) RouterOperation
+	Post(pattern string, fn any, operations ...api.Operation) RouterOperation
+	Put(pattern string, fn any, operations ...api.Operation) RouterOperation
+	Trace(pattern string, fn any, operations ...api.Operation) RouterOperation
 
 	// NotFound defines a handler to respond whenever a route could
 	// not be found.
@@ -171,4 +171,19 @@ type Router interface {
 	// MethodNotAllowed defines a handler to respond whenever a method is
 	// not allowed.
 	MethodNotAllowed(fn any)
+}
+
+// A router operation
+type RouterOperation interface {
+	// The operation documentation.
+	Operation() *api.Operation
+
+	// The router of the operation
+	Router() Router
+
+	// Adds the given type/instance as an input (body, param, query, header) to the operation.
+	Input(input ...any)
+
+	// Adds the given type/instance as a response type to the operation.
+	Output(output ...any)
 }
