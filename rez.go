@@ -123,7 +123,7 @@ type Router interface {
 	AddResponse(code string, response api.Response)
 
 	// Gets or creates a scope for the given request if it doesn't exist yet.
-	GetScope(response http.ResponseWriter, request *http.Request) *deps.Scope
+	GetScope(response http.ResponseWriter, request *http.Request) (scope *deps.Scope, freeScope bool)
 
 	// Use appends one or more middlewares onto the Router stack.
 	// A middleware is a dependency injectable function.

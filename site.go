@@ -102,6 +102,18 @@ func (site *Site) HandleError(err error, response http.ResponseWriter, request *
 	return site.Send(err, response)
 }
 
+// Handles a recovered panic
+func (site *Site) handlePanic(err any, response http.ResponseWriter, request *http.Request) {
+	var asErr error
+	if e, ok := err.(error); ok {
+		asErr = e
+	} else {
+		asErr = fmt.Errorf("unexpected error: %v", err)
+	}
+	asErr = site.HandleError(asErr, response, request, nil)
+	site.internalError(asErr)
+}
+
 // Returns the validation options specified for the given type.
 func (site Site) ValidationOptions(typ reflect.Type) ValidationOptions {
 	if !site.validationEnabled {
@@ -445,7 +457,13 @@ func (site *Site) handle(fn any, op *api.Operation) http.HandlerFunc {
 	}
 
 	return func(w http.ResponseWriter, request *http.Request) {
-		scope := site.GetScope(w, request)
+		defer func() {
+			if err := recover(); err != nil {
+				site.handlePanic(err, w, request)
+			}
+		}()
+
+		scope, freeScope := site.GetScope(w, request)
 
 		scope.Set(op)
 
@@ -456,9 +474,7 @@ func (site *Site) handle(fn any, op *api.Operation) http.HandlerFunc {
 
 		if err != nil {
 			err := site.HandleError(err, w, request, scope)
-			if err != nil && site.internalHandler != nil {
-				site.internalHandler(err)
-			}
+			site.internalError(err)
 		} else {
 			returned := result.Defined()
 			response := any(nil)
@@ -467,9 +483,12 @@ func (site *Site) handle(fn any, op *api.Operation) http.HandlerFunc {
 			}
 
 			err := site.Send(response, w)
-			if err != nil {
-				site.internalHandler(err)
-			}
+			site.internalError(err)
+		}
+
+		if freeScope {
+			err = scope.Free()
+			site.internalError(err)
 		}
 	}
 }
@@ -538,7 +557,7 @@ type scopeKey struct {
 var ScopeKey = scopeKey{"RezScope"}
 
 // Gets or creates a scope for the given request if it doesn't exist yet.
-func (site *Site) GetScope(response http.ResponseWriter, request *http.Request) *deps.Scope {
+func (site *Site) GetScope(response http.ResponseWriter, request *http.Request) (requestScope *deps.Scope, freeScope bool) {
 	scope, isScope := request.Context().Value(ScopeKey).(*deps.Scope)
 	if !isScope {
 		scope = site.Scope.Spawn()
@@ -553,8 +572,12 @@ func (site *Site) GetScope(response http.ResponseWriter, request *http.Request) 
 		deps.SetScoped(scope, &router)
 		deps.SetScoped(scope, scope)
 		deps.SetScoped(scope, validator)
+
+		freeScope = true
 	}
-	return scope
+	requestScope = scope
+
+	return
 }
 
 // Given a type and scope, try to return an injection value.
@@ -610,8 +633,14 @@ func NewMiddlewareNext(h http.Handler, scope *deps.Scope) MiddlewareNext {
 // will be handled like any other error.
 func (site *Site) middleware(fn any) func(h http.Handler) http.Handler {
 	return func(h http.Handler) http.Handler {
-		return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-			scope := site.GetScope(response, request)
+		return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			defer func() {
+				if err := recover(); err != nil {
+					site.handlePanic(err, w, request)
+				}
+			}()
+
+			scope, freeScope := site.GetScope(w, request)
 
 			scope.Set(NewMiddlewareNext(h, scope))
 
@@ -621,9 +650,18 @@ func (site *Site) middleware(fn any) func(h http.Handler) http.Handler {
 			}
 
 			if err != nil {
-				site.HandleError(err, response, request, scope)
+				site.HandleError(err, w, request, scope)
+			}
+			if freeScope {
+				site.internalError(scope.Free())
 			}
 		})
+	}
+}
+
+func (site *Site) internalError(err error) {
+	if err != nil && site.internalHandler != nil {
+		site.internalHandler(err)
 	}
 }
 
@@ -1024,9 +1062,7 @@ func (site *Site) SendAny(response []byte, w http.ResponseWriter, status int, co
 	}
 	w.WriteHeader(status)
 	_, err := w.Write(response)
-	if err != nil && site.internalHandler != nil {
-		site.internalHandler(err)
-	}
+	site.internalError(err)
 }
 
 type injectType int8
