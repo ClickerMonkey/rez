@@ -32,10 +32,14 @@ type Query[R any] struct {
 	// will generate a reusable prepared statement that will be used for
 	// subsequent runs.
 	Prepared bool
-	// The input variables
+	// The named input variables
 	In map[string]any
 	// The output variables
 	Out map[string]any
+	// The position input variables
+	InArgs []any
+	// The position output variables
+	OutArgs []any
 	// Creates a row to be populated. This may be necessary for complex
 	// types with pointers, slices, maps, etc.
 	Create func() R
@@ -157,7 +161,15 @@ func (q Query[R]) GetValues(row *R) []any {
 
 // Converts the in & out to arguments to pass to the query.
 func (q *Query[R]) GetArgs() []any {
-	args := make([]any, 0, len(q.In)+len(q.Out))
+	args := make([]any, 0, len(q.In)+len(q.Out)+len(q.InArgs)+len(q.OutArgs))
+	if len(q.InArgs) > 0 {
+		args = append(args, q.InArgs...)
+	}
+	if len(q.OutArgs) > 0 {
+		for i := range q.OutArgs {
+			args = append(args, sql.Out{Dest: q.OutArgs[i]})
+		}
+	}
 	if len(q.In) > 0 {
 		for name := range q.In {
 			args = append(args, sql.Named(name, q.In[name]))
