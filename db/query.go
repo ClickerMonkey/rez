@@ -113,7 +113,7 @@ func (q *Query[R]) SetColumns(columns []*sql.ColumnType) {
 
 func (q Query[R]) handlerForIndex(indexes []int) func(row reflect.Value) any {
 	return func(row reflect.Value) any {
-		return row.Elem().FieldByIndex(indexes).Interface()
+		return row.Elem().FieldByIndex(indexes).Addr().Interface()
 	}
 }
 
