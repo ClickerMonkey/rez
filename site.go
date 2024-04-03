@@ -1,6 +1,7 @@
 package rez
 
 import (
+	"bytes"
 	"context"
 	"encoding"
 	"encoding/json"
@@ -521,32 +522,43 @@ func (site *Site) Send(response any, w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", string(contentType))
 	w.WriteHeader(status)
 
+	var err error
+	data := &bytes.Buffer{}
+
 	switch {
 	case strings.Contains(contentType, "xml"):
-		enc := xml.NewEncoder(w)
-		return enc.Encode(response)
+		enc := xml.NewEncoder(data)
+		err = enc.Encode(response)
 	case strings.Contains(contentType, "json"):
-		enc := json.NewEncoder(w)
-		return enc.Encode(response)
+		enc := json.NewEncoder(data)
+		err = enc.Encode(response)
 	case strings.Contains(contentType, "text"):
-		var data []byte
 		if marshaller, ok := response.(encoding.TextMarshaler); ok {
 			text, err := marshaller.MarshalText()
 			if err != nil {
 				return err
 			}
-			data = text
+			data.Write(text)
 		} else if bytes, ok := response.([]byte); ok {
-			data = bytes
+			data.Write(bytes)
 		} else {
-			data = []byte(toString(response))
+			data.WriteString(toString(response))
 		}
-		_, err := w.Write(data)
+	}
+
+	if err != nil {
 		return err
 	}
 
-	// Unsupported type. Implement HTTPSend for this response type.
-	_, err := w.Write(nil)
+	if data.Len() > 0 {
+		w.Header().Set("Content-Length", strconv.Itoa(data.Len()))
+
+		_, err = w.Write(data.Bytes())
+	} else {
+		// Unsupported type. Implement HTTPSend for this response type.
+		_, err = w.Write(nil)
+	}
+
 	return err
 }
 
@@ -1060,6 +1072,7 @@ func (site *Site) SendAny(response []byte, w http.ResponseWriter, status int, co
 	if contentType != api.ContentTypeNone {
 		w.Header().Set("Content-Type", string(contentType))
 	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(response)))
 	w.WriteHeader(status)
 	_, err := w.Write(response)
 	site.internalError(err)
