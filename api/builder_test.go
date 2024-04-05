@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -123,4 +124,84 @@ func TestGetNameQualified(t *testing.T) {
 
 	assert.Equal("GithubComClickerMonkeyRezApiOperation", GetNameQualified(Operation{}))
 	assert.Equal("String", GetNameQualified(""))
+}
+
+type HasMessage interface {
+	Message() string
+}
+
+type FriendRequest struct {
+	Friend string `json:"friend"`
+	Note   string `json:"note,omitempty"`
+}
+
+func (ft FriendRequest) Message() string {
+	return fmt.Sprintf("%s requests to be friends: %s", ft.Friend, ft.Note)
+}
+
+type PointIncrease struct {
+	Points int `json:"points"`
+}
+
+func (pi PointIncrease) Message() string {
+	return fmt.Sprintf("%d points were added to your account!", pi.Points)
+}
+
+type EmbeddedPointer struct {
+	Okay string `json:"okay"`
+}
+
+type Embedded struct {
+	Fine string `json:"fine"`
+}
+
+type MessageList struct {
+	*EmbeddedPointer
+	Embedded
+	Messages []HasMessage `json:"messages,omitempty"`
+}
+
+type MessageListParams struct {
+	ID UUID `json:"id"`
+}
+
+func TestComplexScenarios(t *testing.T) {
+	b := NewBuilder()
+
+	SetFullSchema[HasMessage](b, &Schema{
+		OneOf: []Schema{
+			*SchemaRef("FriendRequest"),
+			*SchemaRef("PointIncrease"),
+		},
+	})
+	AddSchema[FriendRequest](b)
+	AddSchema[PointIncrease](b)
+	AddSchema[HasMessage](b)
+	AddSchema[MessageList](b)
+
+	path := Path{}
+	path.Description = "Get messages"
+	path.Get = &Operation{
+		Summary: "Get messages by ID",
+		Responses: Responses{
+			"200": &Response{
+				Content: Contents{
+					ContentTypeJSON: &MediaType{
+						Schema: SchemaRef("MessageList"),
+					},
+				},
+			},
+		},
+	}
+	path.Get.AddParameters(b, ParameterInPath, reflect.TypeOf(MessageListParams{}))
+	b.AddPath("/messages/{id}", &path)
+
+	b.Document = Document{
+		OpenAPI: "3.0.0",
+		Info:    Info{Title: "Test"},
+	}
+
+	doc, _ := json.Marshal(b.Build())
+
+	assert.Equal(t, string(doc), `{"openapi":"3.0.0","info":{"title":"Test","version":""},"paths":{"/messages/{id}":{"description":"Get messages","get":{"summary":"Get messages by ID","parameters":[{"name":"id","in":"path","required":true,"schema":{"$ref":"#/components/schemas/UUID"}}],"responses":{"200":{"description":"","content":{"application/json":{"schema":{"$ref":"#/components/schemas/MessageList"}}}}}}}},"components":{"schemas":{"FriendRequest":{"type":"object","required":["friend"],"properties":{"friend":{"type":"string"},"note":{"type":"string"}},"additionalProperties":false},"HasMessage":{"oneOf":[{"$ref":"#/components/schemas/FriendRequest"},{"$ref":"#/components/schemas/PointIncrease"}]},"MessageList":{"type":"object","required":["okay","fine"],"properties":{"fine":{"type":"string"},"messages":{"type":"array","items":{"$ref":"#/components/schemas/HasMessage"}},"okay":{"type":"string"}},"additionalProperties":false},"PointIncrease":{"type":"object","required":["points"],"properties":{"points":{"type":"integer"}},"additionalProperties":false},"UUID":{"type":"string","description":"A universally unique identifier","format":"uuid"}}}}`)
 }

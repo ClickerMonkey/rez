@@ -32,6 +32,7 @@ type CanReplace[T any] interface {
 }
 
 // This is the root document object of the OpenAPI document.
+// TODO Webhooks
 type Document struct {
 	// REQUIRED. This string MUST be the semantic version number of the OpenAPI Specification version that the OpenAPI document uses. The openapi field SHOULD be used by tooling specifications and clients to interpret the OpenAPI document. This is not related to the API info.version string.
 	OpenAPI string `json:"openapi"`
@@ -68,6 +69,7 @@ func (base Document) Merge(next Document) Document {
 }
 
 // The object provides metadata about the API. The metadata MAY be used by the clients if needed, and MAY be presented in editing or documentation generation tools for convenience.
+// TODO Summary
 type Info struct {
 	// REQUIRED. The title of the API.
 	Title string `json:"title"`
@@ -119,6 +121,7 @@ func (base Contact) Merge(next Contact) Contact {
 }
 
 // License information for the exposed API.
+// TODO Identifier
 type License struct {
 	// REQUIRED. The license name used for the API.
 	Name string `json:"name"`
@@ -167,6 +170,7 @@ type ServerVariable struct {
 }
 
 // Holds a set of reusable objects for different aspects of the OAS. All objects defined within the components object will have no effect on the API unless they are explicitly referenced from properties outside the components object.
+// TODO PathItems
 type Component struct {
 	// An object to hold reusable Schema Objects.
 	Schemas map[string]Schema `json:"schemas,omitempty"`
@@ -289,6 +293,9 @@ type Schema struct {
 	//   - "date-time": Date and time together, for example, 2018-11-13T20:20:39+00:00.
 	//   - "time": Time, for example, 20:20:39+00:00
 	//   - "date": Date, for example, 2018-11-13.
+	//   - "password": Provides a hint that the string may contain sensitive information.
+	// 	 - "byte": Any integer number.
+	//   - "binary": Binary data, used to represent the contents of a file.
 	//   - "duration": A duration as defined by the ISO 8601 ABNF for “duration”. For example, P3D expresses a duration of 3 days.
 	//   - "email": Internet email address, see RFC 5321, section 4.1.2.
 	//   - "idn-email": New in draft 7 The internationalized form of an Internet email address, see RFC 6531.
@@ -305,6 +312,10 @@ type Schema struct {
 	//   - "json-pointer": New in draft 6 A JSON Pointer, according to RFC6901. There is more discussion on the use of JSON Pointer within JSON Schema in Structuring a complex schema. Note that this should be used only when the entire string contains only JSON Pointer content, e.g. /foo/bar. JSON Pointer URI fragments, e.g. #/foo/bar/ should use "uri-reference".
 	//   - "relative-json-pointer": New in draft 7 A relative JSON pointer.
 	//   - "regex": New in draft 7 A regular expression, which should be valid according to the ECMA 262 dialect.
+	//   - "float": 32-bit floating point number.
+	//   - "double": 64-bit floating point number.
+	//   - "int32": 32-bit integer.
+	//   - "int64": 64-bit integer.
 	Format string `json:"format,omitempty"`
 	// The default value for this schema.
 	Default *any `json:"default,omitempty"`
@@ -1164,6 +1175,7 @@ var FormatRegex map[string]*regexp.Regexp = map[string]*regexp.Regexp{
 	"date-time":    regexp.MustCompile(`\d{4}-\d\d?-\d\d?[T ]\d\d?:\d\d:\d\d(\+\d\d:\d\d|)`),
 	"time":         regexp.MustCompile(`\d\d?:\d\d:\d\d(\+\d\d:\d\d|)`),
 	"date":         regexp.MustCompile(`\d{4}-\d\d?-\d\d?`),
+	"byte":         regexp.MustCompile(`^\d+$`),
 	"duration":     regexp.MustCompile(`^P((\d+\.)?\d+[YMWD]$)?((\d+\.)?\d+Y$)?((\d+\.)?\d+M$)?((\d+\.)?\d+W$)?((\d+\.)?\d+D$)?(T((\d+\.)?\d+[HMS]$)((\d+\.)?\d+H$)?((\d+\.)?\d+M$)?((\d+\.)?\d+S$)?)?`),
 	"email":        regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,4}$`),
 	"idn-email":    regexp.MustCompile(`.+@.+\..+`),
@@ -1180,6 +1192,10 @@ var FormatRegex map[string]*regexp.Regexp = map[string]*regexp.Regexp{
 	"json-pointer": regexp.MustCompile(`(/(([^/~])|(~[01]))*)`),
 	//   - "relative-json-pointer": New in draft 7 A relative JSON pointer.
 	//   - "regex": New in draft 7 A regular expression, which should be valid according to the ECMA 262 dialect.
+	"float":  regexp.MustCompile(`^[-+]?\d*(\.\d+|\d+)([eE]\d+)?$`),
+	"double": regexp.MustCompile(`^[-+]?\d*(\.\d+|\d+)([eE]\d+)?$`),
+	"int32":  regexp.MustCompile(`^[-+]?\d+$`),
+	"int64":  regexp.MustCompile(`^[-+]?\d+$`),
 }
 
 // Returns the name for the reference type or nil if its not named
@@ -1211,6 +1227,13 @@ func Ref[V any](name string) V {
 func RefTo(canRef HasReference, name string) *Reference {
 	return &Reference{
 		Ref: canRef.GetReferencePrefix() + EscapePathPart(name),
+	}
+}
+
+// Returns a reference to the given resource with the given name.
+func SchemaRef(name string) *Schema {
+	return &Schema{
+		Reference: RefTo(&Schema{}, name),
 	}
 }
 

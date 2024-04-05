@@ -22,6 +22,16 @@ func SetBaseSchema[V any](build *Builder, s *Schema) {
 	build.BaseSchema[typeOf[V]()] = s
 }
 
+// Returns the built schema of the given type.
+func SchemaOf[V any](build *Builder) *Schema {
+	return build.GetSchema(typeOf[V]())
+}
+
+// Adds a built schema of the given type to the builder.
+func AddSchema[V any](build *Builder) {
+	build.GetSchema(typeOf[V]())
+}
+
 // Builds an OpenAPI document, creating schemas from types, and deals with
 // named schema collisions.
 type Builder struct {
@@ -31,6 +41,10 @@ type Builder struct {
 	NullableIsOptional bool
 	// If a field is optional (not required) should we accept null
 	OptionalIsNullable bool
+	// If a slice without omitempty can be nullable
+	SliceIsNullable bool
+	// If a map without omitempty can be nullable
+	MapIsNullable bool
 	// All collisions that occurred on the last Build().
 	Collisions map[reflect.Type]*Schema
 	// A schema can be defined with starting values, when it's first built it will
@@ -356,6 +370,12 @@ func (build *Builder) AddSchema(typ reflect.Type) {
 	build.GetSchema(typ)
 }
 
+// Adds a schema to the builder for the type of the given value. This is equivalent to calling
+// builder.GetSchema() without getting the schema.
+func (build *Builder) AddSchemaOf(val any) {
+	build.GetSchema(reflect.TypeOf(val))
+}
+
 // Gets or builds the schema for the given type. If a schema could not be determined,
 // nil is returned.
 func (build *Builder) GetSchema(typ reflect.Type) *Schema {
@@ -364,6 +384,22 @@ func (build *Builder) GetSchema(typ reflect.Type) *Schema {
 	}
 
 	return build.BuildSchema(typ, true)
+}
+
+// Gets or builds the schema for the given value. If a schema could not be determined,
+// nil is returned.
+func (build *Builder) GetSchemaOf(v any) *Schema {
+	return build.GetSchema(reflect.TypeOf(v))
+}
+
+// Sets the full schema for the given type base on an a value.
+func (build *Builder) SetFullSchemaOf(v any, s *Schema) {
+	build.FullSchema[reflect.TypeOf(v)] = s
+}
+
+// Sets the full schema for the given type base on an a value.
+func (build *Builder) SetBaseSchemaOf(v any, s *Schema) {
+	build.BaseSchema[reflect.TypeOf(v)] = s
 }
 
 // Saves the schema for the given type. This adds the named field on the schema which signals
@@ -397,8 +433,10 @@ func (build *Builder) BuildSchema(typ reflect.Type, addToDocument bool) *Schema 
 	if fullSchema := build.FullSchema[typ]; fullSchema != nil {
 		*s = *fullSchema
 		continueDefining = false
+		isDefined = isDefined || typ.Kind() == reflect.Interface
 	} else if override := build.BaseSchema[typ]; override != nil {
 		*s = *override
+		isDefined = isDefined || typ.Kind() == reflect.Interface
 	} else if custom, full := GetSchema(typ); custom != nil {
 		*s = *custom
 		isDefined = true
@@ -443,21 +481,29 @@ func (build *Builder) BuildSchema(typ reflect.Type, addToDocument bool) *Schema 
 		s.Type = MergeValue(s.Type, DataTypeArray)
 		s.MinItems = MergeValue(s.MinItems, &len)
 		s.MaxItems = MergeValue(s.MaxItems, len)
-		s.Items = MergeValue(s.Items, build.GetSchema(typ.Elem()))
+		s.Items = MergeValue(s.Items, build.GetSchema(typ.Elem()).AsReference())
 	case reflect.Slice:
 		s.Type = MergeValue(s.Type, DataTypeArray)
-		s.Items = MergeValue(s.Items, build.GetSchema(typ.Elem()))
+		s.Items = MergeValue(s.Items, build.GetSchema(typ.Elem()).AsReference())
+		if build.SliceIsNullable {
+			s = build.makeNullable(typ, s)
+		}
 	case reflect.Map:
 		s.Type = MergeValue(s.Type, DataTypeObject)
-		s.AdditionalProperties = MergeValue(s.AdditionalProperties, SchemaForSchema(build.GetSchema(typ.Elem())))
+		s.AdditionalProperties = MergeValue(s.AdditionalProperties, SchemaForSchema(build.GetSchema(typ.Elem()).AsReference()))
+		if build.MapIsNullable {
+			s = build.makeNullable(typ, s)
+		}
 	case reflect.String:
 		s.Type = MergeValue(s.Type, DataTypeString)
 	case reflect.Bool:
 		s.Type = MergeValue(s.Type, DataTypeBoolean)
 	case reflect.Complex128, reflect.Complex64, reflect.Float32, reflect.Float64:
 		s.Type = MergeValue(s.Type, DataTypeNumber)
+		s.Format = MergeValue(s.Format, KindToFormat[typ.Kind()])
 	case reflect.Int, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int8, reflect.Uint, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint8:
 		s.Type = MergeValue(s.Type, DataTypeInteger)
+		s.Format = MergeValue(s.Format, KindToFormat[typ.Kind()])
 	case reflect.Struct:
 		s.Type = MergeValue(s.Type, DataTypeObject)
 		// If required wasn't explicitly required via APISchema
@@ -478,6 +524,14 @@ func (build *Builder) BuildSchema(typ reflect.Type, addToDocument bool) *Schema 
 	}
 
 	return s
+}
+
+// A map from GO kind to format.
+var KindToFormat = map[reflect.Kind]string{
+	reflect.Float32: "float",
+	reflect.Float64: "double",
+	reflect.Int32:   "int32",
+	reflect.Int64:   "int64",
 }
 
 // Makes the given schema nullable. If the given schema is named, it creates a new
@@ -526,7 +580,6 @@ func (build *Builder) addProperties(objectSchema *Schema, parentOptional bool, t
 		field := typ.Field(i)
 
 		// A field is required if its not nullable and there is no omitempty or required is specified in the api tag.
-
 		property, optional, skip := GetJSONOptions(field)
 		if skip {
 			continue
@@ -535,7 +588,12 @@ func (build *Builder) addProperties(objectSchema *Schema, parentOptional bool, t
 
 		// Embedded struct?
 		if field.Anonymous {
-			build.addProperties(objectSchema, optional, field.Type)
+			// Handle pointers
+			fieldType := field.Type
+			for fieldType.Kind() == reflect.Pointer {
+				fieldType = fieldType.Elem()
+			}
+			build.addProperties(objectSchema, optional, fieldType)
 		} else {
 			propertySchema := build.GetSchema(field.Type)
 
@@ -658,6 +716,9 @@ func splitWithEscape(s string, delim string, escape string) []string {
 //   - exclusivemax=1
 //   - exclusiveminimum=false
 //   - exclusivemin=0
+//   - oneof=X|A|B
+//   - allof=X|A|B
+//   - anyof=X|A|B
 func ApplyOptions(s *Schema, tag string) {
 	apiOptions := splitWithEscape(tag, ",", "\\")
 
@@ -723,6 +784,27 @@ func ApplyOptions(s *Schema, tag string) {
 			parseBool = &s.ExclusiveMaximum
 		case "exclusiveminimum", "exclusivemin":
 			parseBool = &s.ExclusiveMinimum
+		case "oneof":
+			oneOfs := splitWithEscape(value, "|", "\\")
+			for _, oneOf := range oneOfs {
+				s.OneOf = append(s.OneOf, Schema{
+					Reference: RefTo(&Schema{}, oneOf),
+				})
+			}
+		case "allof":
+			allOfs := splitWithEscape(value, "|", "\\")
+			for _, allOf := range allOfs {
+				s.AllOf = append(s.AllOf, Schema{
+					Reference: RefTo(&Schema{}, allOf),
+				})
+			}
+		case "anyof":
+			anyOfs := splitWithEscape(value, "|", "\\")
+			for _, anyOf := range anyOfs {
+				s.AnyOf = append(s.AnyOf, Schema{
+					Reference: RefTo(&Schema{}, anyOf),
+				})
+			}
 		}
 
 		if parseInt != nil {
