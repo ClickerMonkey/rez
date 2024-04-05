@@ -32,6 +32,11 @@ func AddSchema[V any](build *Builder) {
 	build.GetSchema(typeOf[V]())
 }
 
+// Sets the name of the given type
+func SetName[V any](build *Builder, name string) {
+	build.Names[typeOf[V]()] = name
+}
+
 // Builds an OpenAPI document, creating schemas from types, and deals with
 // named schema collisions.
 type Builder struct {
@@ -53,6 +58,8 @@ type Builder struct {
 	// A schema can be defined in its entirety and schema building won't try to detect it.
 	// The full schema should be defined before any building is done.
 	FullSchema map[reflect.Type]*Schema
+	// An override name for the given type.
+	Names map[reflect.Type]string
 
 	schemas         map[reflect.Type]*Schema
 	paths           map[string]*Path
@@ -71,6 +78,7 @@ func NewBuilder() *Builder {
 		BaseSchema: make(map[reflect.Type]*Schema),
 		FullSchema: make(map[reflect.Type]*Schema),
 		Collisions: make(map[reflect.Type]*Schema),
+		Names:      make(map[reflect.Type]string),
 
 		schemas:         make(map[reflect.Type]*Schema),
 		paths:           make(map[string]*Path),
@@ -105,8 +113,16 @@ func (build *Builder) Build() Document {
 		if doc.Components.Schemas == nil {
 			doc.Components.Schemas = make(map[string]Schema)
 		}
+		for typ := range build.Names {
+			schema := build.schemas[typ]
+			if schema != nil {
+				build.setDocumentSchema(&doc, schema, typ)
+			}
+		}
 		for typ, schema := range build.schemas {
-			build.setDocumentSchema(&doc, schema, typ)
+			if _, named := build.Names[typ]; !named {
+				build.setDocumentSchema(&doc, schema, typ)
+			}
 		}
 	}
 
@@ -180,13 +196,26 @@ func (build *Builder) Build() Document {
 	return doc
 }
 
+// Sets the name of the type based on the value.
+func (build *Builder) SetName(typ reflect.Type, name string) {
+	build.Names[typ] = name
+}
+
+// Sets the name of the type based on the value.
+func (build *Builder) SetNameOf(val any, name string) {
+	build.Names[reflect.TypeOf(val)] = name
+}
+
 // Adds the schema to the given document, and if a name collision occurs it calculates a
 // fully qualified name including the package path and uses that. If a collision still exists
 // with the full name its recorded in Builder.Collisions and the schema is not added to the document.
 func (build *Builder) setDocumentSchema(doc *Document, s *Schema, typ reflect.Type) {
-	name := GetName(typ)
-	if _, exists := doc.Components.Schemas[name]; exists {
-		name = GetNameQualified(typ)
+	name, ok := build.Names[typ]
+	if !ok {
+		name = GetName(typ)
+		if _, exists := doc.Components.Schemas[name]; exists {
+			name = GetNameQualified(typ)
+		}
 	}
 
 	s.named.Ref = RefTo(s, name).Ref
