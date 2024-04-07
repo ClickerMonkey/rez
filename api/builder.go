@@ -497,31 +497,33 @@ func (build *Builder) BuildSchema(typ reflect.Type, addToDocument bool) *Schema 
 		s.Description = GetDescription(typ)
 	}
 
-	// Coalesce ensures we don't override non-zero values returned by APISchema
+	// Use an alternative type for ths schema (possibly).
+	schemaType := GetSchemaType(typ)
 
-	switch typ.Kind() {
+	// Coalesce ensures we don't override non-zero values returned by APISchema
+	switch schemaType.Kind() {
 	// Unsupported types
 	case reflect.Func, reflect.Chan:
 		return nil
 	case reflect.Interface:
 		// No type
 	case reflect.Array:
-		len := typ.Len()
+		len := schemaType.Len()
 		s.Type = MergeValue(s.Type, DataTypeArray)
 		s.MinItems = MergeValue(s.MinItems, &len)
 		s.MaxItems = MergeValue(s.MaxItems, len)
-		s.Items = MergeValue(s.Items, build.GetSchema(typ.Elem()).AsReference())
+		s.Items = MergeValue(s.Items, build.GetSchema(schemaType.Elem()).AsReference())
 	case reflect.Slice:
 		s.Type = MergeValue(s.Type, DataTypeArray)
-		s.Items = MergeValue(s.Items, build.GetSchema(typ.Elem()).AsReference())
+		s.Items = MergeValue(s.Items, build.GetSchema(schemaType.Elem()).AsReference())
 		if build.SliceIsNullable {
-			s = build.makeNullable(typ, s)
+			s = build.makeNullable(schemaType, s)
 		}
 	case reflect.Map:
 		s.Type = MergeValue(s.Type, DataTypeObject)
 		s.AdditionalProperties = MergeValue(s.AdditionalProperties, SchemaForSchema(build.GetSchema(typ.Elem()).AsReference()))
 		if build.MapIsNullable {
-			s = build.makeNullable(typ, s)
+			s = build.makeNullable(schemaType, s)
 		}
 	case reflect.String:
 		s.Type = MergeValue(s.Type, DataTypeString)
@@ -529,10 +531,10 @@ func (build *Builder) BuildSchema(typ reflect.Type, addToDocument bool) *Schema 
 		s.Type = MergeValue(s.Type, DataTypeBoolean)
 	case reflect.Complex128, reflect.Complex64, reflect.Float32, reflect.Float64:
 		s.Type = MergeValue(s.Type, DataTypeNumber)
-		s.Format = MergeValue(s.Format, KindToFormat[typ.Kind()])
+		s.Format = MergeValue(s.Format, KindToFormat[schemaType.Kind()])
 	case reflect.Int, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int8, reflect.Uint, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint8:
 		s.Type = MergeValue(s.Type, DataTypeInteger)
-		s.Format = MergeValue(s.Format, KindToFormat[typ.Kind()])
+		s.Format = MergeValue(s.Format, KindToFormat[schemaType.Kind()])
 	case reflect.Struct:
 		s.Type = MergeValue(s.Type, DataTypeObject)
 		// If required wasn't explicitly required via APISchema
@@ -549,7 +551,7 @@ func (build *Builder) BuildSchema(typ reflect.Type, addToDocument bool) *Schema 
 		s.AdditionalProperties = SchemaForBool(false)
 
 		// Recursive function to populate properties
-		build.addProperties(s, false, typ)
+		build.addProperties(s, false, schemaType)
 	}
 
 	return s

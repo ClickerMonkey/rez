@@ -12,6 +12,14 @@ type HasName interface {
 	APIName() string
 }
 
+// A type which has another type it actually marshals to and from.
+// You can override the schema type by specifying a full or base schema
+// but if the type is fundamentally different then the wrong validation and wrong
+// examples can be generated.
+type HasSchemaType interface {
+	APISchemaType() any
+}
+
 // A type which has a specific description.
 type HasDescription interface {
 	APIDescription() string
@@ -57,6 +65,18 @@ type HasOperation interface {
 // on the functions argument types and return types.
 type HasOperationUpdate interface {
 	APIOperationUpdate(op *Operation)
+}
+
+// Gets reflect.Type of the given type or value.
+// This accounts for if the type/value implements the HasSchemaType.
+func GetSchemaType(valueOrType any) reflect.Type {
+	customType := getValueOrType(valueOrType, func(value HasSchemaType) any {
+		return value.APISchemaType()
+	})
+	if customType != nil {
+		valueOrType = customType
+	}
+	return GetType(valueOrType)
 }
 
 // Gets the Name of the given type. If it implements HasName then that name is returned.
