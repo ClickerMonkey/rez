@@ -272,6 +272,7 @@ func (site *Site) With(fns ...any) Router {
 func (site *Site) Group(fn func(r Router)) Router {
 	c := site.copy()
 	c.router = site.router.Group(func(r chi.Router) {
+		c.router = r
 		fn(c)
 	})
 	return c
