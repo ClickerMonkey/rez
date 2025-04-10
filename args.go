@@ -54,13 +54,13 @@ func (p Path[P]) APIValidate(op *api.Operation, v *Validator) {
 	schema := op.GetParametersSchema(api.ParameterInPath)
 	Validate(&schema, p.Value, v.Next("path"))
 }
-func (r *Path[P]) ProvideDynamic(scope *deps.Scope) error {
+func (p *Path[P]) ProvideDynamic(scope *deps.Scope) error {
 	request, _ := deps.GetScoped[http.Request](scope)
-	err := getPath(&r.Value, request)
+	err := getPath(&p.Value, request)
 	if err != nil {
 		return err
 	}
-	return ValidateInjectable(r, scope)
+	return ValidateInjectable(p, scope)
 }
 
 // A function parameter that is injected with query parameters.
@@ -73,17 +73,17 @@ var _ Injectable = &Query[int]{}
 func (q Query[Q]) APIRequestTypes() RequestTypes {
 	return RequestTypes{Query: deps.TypeOf[Q]()}
 }
-func (p Query[Q]) APIValidate(op *api.Operation, v *Validator) {
+func (q Query[Q]) APIValidate(op *api.Operation, v *Validator) {
 	schema := op.GetParametersSchema(api.ParameterInQuery)
-	Validate(&schema, p.Value, v.Next("query"))
+	Validate(&schema, q.Value, v.Next("query"))
 }
-func (r *Query[Q]) ProvideDynamic(scope *deps.Scope) error {
+func (q *Query[Q]) ProvideDynamic(scope *deps.Scope) error {
 	request, _ := deps.GetScoped[http.Request](scope)
-	err := getQuery(&r.Value, request)
+	err := getQuery(&q.Value, request)
 	if err != nil {
 		return err
 	}
-	return ValidateInjectable(r, scope)
+	return ValidateInjectable(q, scope)
 }
 
 // A function parameter that is injected with the request body.
@@ -96,11 +96,11 @@ var _ Injectable = &Body[int]{}
 func (b Body[B]) APIRequestTypes() RequestTypes {
 	return RequestTypes{Body: deps.TypeOf[B]()}
 }
-func (p Body[B]) APIValidate(op *api.Operation, v *Validator) {
+func (b Body[B]) APIValidate(op *api.Operation, v *Validator) {
 	if op.RequestBody != nil && op.RequestBody.Content != nil && op.RequestBody.Content[api.ContentTypeJSON] != nil {
 		media := op.RequestBody.Content[api.ContentTypeJSON]
 		if media.Schema != nil {
-			Validate(media.Schema, p.Value, v.Next("body"))
+			Validate(media.Schema, b.Value, v.Next("body"))
 		}
 	}
 }
@@ -125,17 +125,17 @@ var _ Injectable = &Request[int, int, int]{}
 func (r Request[B, P, Q]) APIRequestTypes() RequestTypes {
 	return RequestTypes{Body: deps.TypeOf[B](), Path: deps.TypeOf[P](), Query: deps.TypeOf[Q]()}
 }
-func (p Request[B, P, Q]) APIValidate(op *api.Operation, v *Validator) {
+func (r Request[B, P, Q]) APIValidate(op *api.Operation, v *Validator) {
 	if op.RequestBody != nil && op.RequestBody.Content != nil && op.RequestBody.Content[api.ContentTypeJSON] != nil {
 		media := op.RequestBody.Content[api.ContentTypeJSON]
 		if media.Schema != nil {
-			Validate(media.Schema, p.Body, v.Next("body"))
+			Validate(media.Schema, r.Body, v.Next("body"))
 		}
 	}
 	pathSchema := op.GetParametersSchema(api.ParameterInPath)
-	Validate(&pathSchema, p.Path, v.Next("path"))
+	Validate(&pathSchema, r.Path, v.Next("path"))
 	querySchema := op.GetParametersSchema(api.ParameterInQuery)
-	Validate(&querySchema, p.Query, v.Next("query"))
+	Validate(&querySchema, r.Query, v.Next("query"))
 }
 func (r *Request[B, P, Q]) ProvideDynamic(scope *deps.Scope) error {
 	request, _ := deps.GetScoped[http.Request](scope)
@@ -168,13 +168,13 @@ func (h Header[H]) APIValidate(op *api.Operation, v *Validator) {
 	schema := op.GetParametersSchema(api.ParameterInHeader)
 	Validate(&schema, h.Value, v.Next("header"))
 }
-func (r *Header[H]) ProvideDynamic(scope *deps.Scope) error {
+func (h *Header[H]) ProvideDynamic(scope *deps.Scope) error {
 	request, _ := deps.GetScoped[http.Request](scope)
-	err := getHeader(&r.Value, request)
+	err := getHeader(&h.Value, request)
 	if err != nil {
 		return err
 	}
-	return ValidateInjectable(r, scope)
+	return ValidateInjectable(h, scope)
 }
 
 // Validates the injectable by pulling the validator and operation
@@ -193,7 +193,9 @@ func ValidateInjectable(inj Injectable, scope *deps.Scope) error {
 }
 
 func getHeader(header any, r *http.Request) error {
-	outNode := &queryNode{}
+	outNode := &queryNode{
+		kind: queryNodeKindObject,
+	}
 
 	for k, v := range r.Header {
 		if len(v) > 0 {
@@ -210,8 +212,7 @@ func getHeader(header any, r *http.Request) error {
 
 func getBody(body any, r *http.Request) error {
 	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
-	err := decoder.Decode(body)
+	err := decodeJson(r.Body, body)
 	if err != nil && err != io.EOF {
 		return err
 	}
@@ -219,7 +220,9 @@ func getBody(body any, r *http.Request) error {
 }
 
 func getPath(path any, r *http.Request) error {
-	outNode := &queryNode{}
+	outNode := &queryNode{
+		kind: queryNodeKindObject,
+	}
 
 	ctx := chi.RouteContext(r.Context())
 	if ctx != nil {
@@ -237,7 +240,9 @@ func getPath(path any, r *http.Request) error {
 }
 
 func getQuery(query any, r *http.Request) error {
-	outNode := &queryNode{}
+	outNode := &queryNode{
+		kind: queryNodeKindObject,
+	}
 	pathRegex := regexp.MustCompile(`[\]\[\.]+`)
 	queryValues := r.URL.Query()
 
@@ -268,6 +273,7 @@ func nonAnyType(val any) reflect.Type {
 	return rv.Type()
 }
 
+// target is either *T because it was
 func encodeMap(target any, m any) error {
 	s := strings.Builder{}
 	err := json.NewEncoder(&s).Encode(m)
@@ -275,11 +281,33 @@ func encodeMap(target any, m any) error {
 		return err
 	}
 	reader := strings.NewReader(s.String())
-	err = json.NewDecoder(reader).Decode(target)
+	err = decodeJson(reader, target)
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+// target is either *any (where value is an any to a *T) OR target is *T
+func decodeJson(reader io.Reader, target any) error {
+	readerTarget := target
+	rv := reflect.ValueOf(target)
+	isAny := isAnyPointer(rv)
+	if isAny {
+		readerTarget = reflect.New(rv.Elem().Elem().Type()).Interface()
+	}
+	err := json.NewDecoder(reader).Decode(readerTarget)
+	if err != nil {
+		return err
+	}
+	if isAny {
+		rv.Elem().Set(reflect.ValueOf(readerTarget).Elem())
+	}
+	return nil
+}
+
+func isAnyPointer(rv reflect.Value) bool {
+	return rv.Kind() == reflect.Pointer && rv.Elem().Kind() == reflect.Interface
 }
 
 type queryNodeKind int

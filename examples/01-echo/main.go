@@ -21,6 +21,6 @@ func main() {
 
 	site.PrintPaths()
 	site.ServeSwaggerUI("/doc/swagger", nil)
-	site.ServeRedoc("/doc/redoc")
+	site.ServeRedoc("/doc/redoc", nil)
 	site.Listen(":3000")
 }

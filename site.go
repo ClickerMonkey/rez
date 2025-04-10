@@ -616,6 +616,18 @@ func (site *Site) dynamicRequestInjection(typ reflect.Type, scope *deps.Scope) (
 		if err != nil {
 			return nil, err
 		}
+
+		switch v := inj.(type) {
+		case *Body[any]:
+			val = v.Value
+		case *Path[any]:
+			val = v.Value
+		case *Query[any]:
+			val = v.Value
+		case *Header[any]:
+			val = v.Value
+		}
+
 		return val, nil
 	}
 
@@ -844,20 +856,35 @@ func (site *Site) ServeSwaggerUI(pattern string, options map[string]any) {
 	}
 	optionsJson, _ := json.Marshal(options)
 
+	title := "Docs"
+	description := "Rest API Documentation"
+
+	if site.Open != nil {
+		if site.Open.Document.Info.Title != "" {
+			title = site.Open.Document.Info.Title
+		}
+		if site.Open.Document.Info.Description != "" {
+			description = site.Open.Document.Info.Description
+		}
+	}
+
 	html := []byte(`
 <!DOCTYPE html>
-<html>
+<html lang="en">
 	<head>
-			<title>Docs</title>
-			<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@3.17.0/swagger-ui.css">
+	  <meta charset="utf-8" />
+	  <meta name="viewport" content="width=device-width, initial-scale=1" />
+	  <meta name="description" content="` + description + `" />
+	  <title>` + title + `</title>
+	  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui.css" />
 	</head>
 	<body>
-			<div id="ui-wrapper-new" data-spec="{{spec}}">
-					Loading....
-			</div>
-	</body>
-	<script src="https://unpkg.com/swagger-ui-dist@3.23.1/swagger-ui-bundle.js"></script>
-	<script>
+		<div id="ui-wrapper-new" data-spec="{{spec}}">
+				Loading....
+		</div>
+		<script src="https://unpkg.com/swagger-ui-dist@5.11.0/swagger-ui-bundle.js" crossorigin></script>
+		<script>
+		window.onload = function() {
 			var swaggerUIOptions = ` + string(optionsJson) + `;
 			if (!swaggerUIOptions.presets) {
 				swaggerUIOptions.presets = [
@@ -872,7 +899,9 @@ func (site *Site) ServeSwaggerUI(pattern string, options map[string]any) {
 			}
 			var ui = SwaggerUIBundle(swaggerUIOptions)
 			window.ui = ui
-	</script>
+		};
+		</script>
+	</body>
 </html>`)
 
 	site.router.Get(pattern, func(w http.ResponseWriter, r *http.Request) {
@@ -880,25 +909,49 @@ func (site *Site) ServeSwaggerUI(pattern string, options map[string]any) {
 	})
 }
 
-func (site *Site) ServeRedoc(pattern string) {
+func (site *Site) ServeRedoc(pattern string, options map[string]any) {
 	site.ensureServeOpenJSON(pattern)
+
+	if options == nil {
+		options = make(map[string]any)
+	}
+	optionsJson, _ := json.Marshal(options)
+
+	title := "Docs"
+	description := "Rest API Documentation"
+
+	if site.Open != nil {
+		if site.Open.Document.Info.Title != "" {
+			title = site.Open.Document.Info.Title
+		}
+		if site.Open.Document.Info.Description != "" {
+			description = site.Open.Document.Info.Description
+		}
+	}
 
 	html := []byte(`
 <!DOCTYPE html>
 <html>
 	<head>
-		<title>ReDoc</title>
+		<title>` + title + `</title>
 		<meta charset="utf-8"/>
 		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="description" content="` + description + `" />
 		<link href="https://fonts.googleapis.com/css?family=Montserrat:300,400,700|Roboto:300,400,700" rel="stylesheet">
 		<style> body { margin: 0; padding: 0; } </style>
 	</head>
 	<body>
-		<redoc spec-url='` + site.openJsonPath + `'></redoc>
-		<script src="https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js"> </script>
+		<script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"> </script>
+		<div id="redoc-container"></div>
+		<script>
+			Redoc.init(
+				'` + site.openJsonPath + `', 
+				` + string(optionsJson) + `, 
+				document.getElementById('redoc-container')
+			)
+		</script>
 	</body>
-</html>
-	`)
+</html>`)
 
 	site.router.Get(pattern, func(w http.ResponseWriter, r *http.Request) {
 		site.SendAny(html, w, 200, api.ContentTypeHTML)

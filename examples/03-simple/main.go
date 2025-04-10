@@ -11,6 +11,33 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+type SearchQuery struct {
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+}
+
+var _ rez.CanValidateFull = SearchQuery{}
+
+func (q SearchQuery) FullValidate(v *rez.Validator) {
+	if q.Limit < 0 {
+		v.Next("limit").Add(rez.Validation{Message: "limit must be positive"})
+	} else if q.Limit > 1000 {
+		v.Next("limit").Add(rez.Validation{Message: "limit must be less than 1000"})
+	}
+	if q.Offset < 0 {
+		v.Next("offset").Add(rez.Validation{Message: "offset must be positive"})
+	}
+}
+
+func (q SearchQuery) Resolve() (limit int, offset int) {
+	limit = q.Limit
+	offset = q.Offset
+	if limit <= 0 {
+		limit = 20
+	}
+	return
+}
+
 type TaskPath struct {
 	ID int `json:"id" api:"min=1"`
 }
@@ -19,6 +46,15 @@ type Task struct {
 	Name   string     `json:"name"`
 	Done   bool       `json:"done" api:"desc=If the task is complete\\, if true doneAt should be given."`
 	DoneAt *time.Time `json:"doneAt,omitempty" api:"desc=When the task was marked done."`
+}
+type TaskSearchRequest struct {
+	Name *string `json:"name"`
+	Done *bool   `json:"done"`
+}
+type TaskSearchResponse struct {
+	Offset  int    `json:"offset"`
+	Total   int    `json:"total"`
+	Results []Task `json:"results"`
 }
 type AuthRequest struct {
 	ID       string `json:"id" api:"desc=The email/username of the user to authenticate.,format=email"`
@@ -36,6 +72,8 @@ type JWT string
 
 func main() {
 	site := rez.New(chi.NewRouter())
+	site.Open.Document.Info.Title = "REZ Simple Example"
+	site.Open.Document.Info.Description = "REZ Simple Example API Documentation"
 	site.Open.AddSecurity("bearer", &api.Security{
 		Type:         api.SecurityTypeHTTP,
 		Description:  "Authentication with a 'Bearer {token}' in the Authorization header.",
@@ -62,9 +100,12 @@ func main() {
 		r.UpdatePath("/{id}", api.Path{Summary: "Operations on a specific task"})
 		r.UpdateOperations(api.Operation{Tags: []string{"Task"}})
 		r.DefinePath(TaskPath{})
+		r.DefineQuery(SearchQuery{})
+		r.DefineBody(TaskSearchRequest{})
 
 		r.Get("/{id}", getTask, api.Operation{Summary: "Get task by id"})
 		r.Delete("/{id}", deleteTask, api.Operation{Summary: "Delete task by id"})
+		r.Post("/search", searchTask, api.Operation{Summary: "Search tasks"})
 	})
 	site.Group(func(r rez.Router) {
 		r.UpdatePath("/auth", api.Path{Summary: "Operations for authentication"})
@@ -79,7 +120,7 @@ func main() {
 
 	site.PrintPaths()
 	site.ServeSwaggerUI("/doc/swagger", nil)
-	site.ServeRedoc("/doc/redoc")
+	site.ServeRedoc("/doc/redoc", nil)
 	site.Listen(":3000")
 }
 
@@ -94,6 +135,15 @@ func deleteTask(params TaskPath) *rez.NotFound[string] {
 		return rez.NewNotFound("Task not found")
 	}
 	return nil
+}
+func searchTask(body TaskSearchRequest, query SearchQuery) (*TaskSearchResponse, *rez.Unauthorized[string]) {
+	_, offset := query.Resolve()
+
+	return &TaskSearchResponse{
+		Total:   1,
+		Results: []Task{{Name: "REZ Examples", Done: false}},
+		Offset:  offset,
+	}, nil
 }
 func authLogin(body AuthRequest) (*AuthResult, *rez.Unauthorized[string]) {
 	return &AuthResult{Token: body.ID + body.Password}, nil
