@@ -66,6 +66,14 @@ type Router interface {
 	// Sets the validation options for the type or value's type.
 	SetValidationOptions(valueOrType any, options ValidationOptions)
 
+	// Sets the memory limit (in bytes) for multipart/form-data requests.
+	// Any request larger than this will utilize temporary files.
+	SetMemoryLimit(memoryLimit int64)
+
+	// Gets the memory limit (in bytes) for multipart/form-data requests.
+	// Any request larger than this will utilize temporary files.
+	GetMemoryLimit() int64
+
 	// Adds the types of the given values as injectable request bodies. This avoids
 	// the necessity of rez.Body or rez.Request. If any of the values/types
 	// have already been defined this will cause a panic.

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/url"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -56,7 +58,7 @@ func (p Path[P]) APIValidate(op *api.Operation, v *Validator) {
 }
 func (p *Path[P]) ProvideDynamic(scope *deps.Scope) error {
 	request, _ := deps.GetScoped[http.Request](scope)
-	err := getPath(&p.Value, request)
+	err := applyPathToTarget(&p.Value, request)
 	if err != nil {
 		return err
 	}
@@ -79,7 +81,7 @@ func (q Query[Q]) APIValidate(op *api.Operation, v *Validator) {
 }
 func (q *Query[Q]) ProvideDynamic(scope *deps.Scope) error {
 	request, _ := deps.GetScoped[http.Request](scope)
-	err := getQuery(&q.Value, request)
+	err := applyURLToTarget(&q.Value, request)
 	if err != nil {
 		return err
 	}
@@ -106,10 +108,13 @@ func (b Body[B]) APIValidate(op *api.Operation, v *Validator) {
 }
 func (b *Body[B]) ProvideDynamic(scope *deps.Scope) error {
 	request, _ := deps.GetScoped[http.Request](scope)
-	err := getBody(&b.Value, request)
+	router, _ := deps.GetScoped[Router](scope)
+
+	err := getBody(&b.Value, request, *router)
 	if err != nil {
 		return err
 	}
+
 	return ValidateInjectable(b, scope)
 }
 
@@ -139,18 +144,21 @@ func (r Request[B, P, Q]) APIValidate(op *api.Operation, v *Validator) {
 }
 func (r *Request[B, P, Q]) ProvideDynamic(scope *deps.Scope) error {
 	request, _ := deps.GetScoped[http.Request](scope)
-	err := getBody(&r.Body, request)
+	router, _ := deps.GetScoped[Router](scope)
+
+	err := getBody(&r.Body, request, *router)
 	if err != nil {
 		return err
 	}
-	err = getPath(&r.Path, request)
+	err = applyPathToTarget(&r.Path, request)
 	if err != nil {
 		return err
 	}
-	err = getQuery(&r.Query, request)
+	err = applyURLToTarget(&r.Query, request)
 	if err != nil {
 		return err
 	}
+
 	return ValidateInjectable(r, scope)
 }
 
@@ -205,21 +213,44 @@ func getHeader(header any, r *http.Request) error {
 
 	outNode.fixForType(nonAnyType(header))
 	out := outNode.convert()
-	enc := encodeMap(header, out)
+	enc := applyJSONValueToTarget(header, out)
 
 	return enc
 }
 
-func getBody(body any, r *http.Request) error {
+func getBody(body any, r *http.Request, router Router) error {
 	defer r.Body.Close()
-	err := decodeJson(r.Body, body)
+
+	rawContentType := r.Header.Get("Content-Type")
+	contentType := api.ContentType(strings.ToLower(strings.SplitN(rawContentType, ";", 2)[0]))
+
+	var err error
+
+	switch contentType {
+	case api.ContentTypeJSON, api.ContentTypeNone:
+		err = decodeJson(r.Body, body)
+	case api.ContentTypeForm:
+		err = r.ParseForm()
+		if err == nil {
+			err = applyURLValuesToTarget(body, r.PostForm)
+		}
+	case api.ContentTypeFormData:
+		err = r.ParseMultipartForm(router.GetMemoryLimit())
+		if err == nil && r.MultipartForm != nil {
+			err = applyMultipartFormToTarget(body, r.MultipartForm)
+		}
+	default:
+		return fmt.Errorf("Content-Type %s not supported", rawContentType)
+	}
+
 	if err != nil && err != io.EOF {
 		return err
 	}
+
 	return nil
 }
 
-func getPath(path any, r *http.Request) error {
+func applyPathToTarget(target any, r *http.Request) error {
 	outNode := &queryNode{
 		kind: queryNodeKindObject,
 	}
@@ -232,25 +263,29 @@ func getPath(path any, r *http.Request) error {
 		}
 	}
 
-	outNode.fixForType(nonAnyType(path))
+	outNode.fixForType(nonAnyType(target))
 	out := outNode.convert()
-	enc := encodeMap(path, out)
+	err := applyJSONValueToTarget(target, out)
 
-	return enc
+	return err
 }
 
-func getQuery(query any, r *http.Request) error {
+func applyURLToTarget(target any, r *http.Request) error {
+	return applyURLValuesToTarget(target, r.URL.Query())
+}
+
+var urlKeySplitter = regexp.MustCompile(`[\]\[\.]+`)
+
+func applyURLValuesToTarget(target any, values url.Values) error {
 	outNode := &queryNode{
 		kind: queryNodeKindObject,
 	}
-	pathRegex := regexp.MustCompile(`[\]\[\.]+`)
-	queryValues := r.URL.Query()
 
-	for k, v := range queryValues {
+	for k, v := range values {
 		if len(v) == 0 {
 			continue
 		}
-		path := pathRegex.Split(strings.TrimRight(k, "]"), -1)
+		path := urlKeySplitter.Split(strings.TrimRight(k, "]"), -1)
 		curr := outNode
 		for _, node := range path {
 			curr = curr.get(node)
@@ -258,11 +293,47 @@ func getQuery(query any, r *http.Request) error {
 		curr.set(v[0])
 	}
 
-	outNode.fixForType(nonAnyType(query))
+	outNode.fixForType(nonAnyType(target))
 	out := outNode.convert()
-	enc := encodeMap(query, out)
+	err := applyJSONValueToTarget(target, out)
 
-	return enc
+	return err
+}
+
+func applyMultipartFormToTarget(target any, form *multipart.Form) error {
+	outNode := &queryNode{
+		kind: queryNodeKindObject,
+	}
+
+	for k, v := range form.Value {
+		if len(v) == 0 {
+			continue
+		}
+		path := urlKeySplitter.Split(strings.TrimRight(k, "]"), -1)
+		curr := outNode
+		for _, node := range path {
+			curr = curr.get(node)
+		}
+		curr.set(v[0])
+	}
+
+	for k, v := range form.File {
+		if len(v) == 0 {
+			continue
+		}
+		path := urlKeySplitter.Split(strings.TrimRight(k, "]"), -1)
+		curr := outNode
+		for _, node := range path {
+			curr = curr.get(node)
+		}
+		curr.set(fmt.Sprintf("%s::%d", k, len(v)))
+	}
+
+	outNode.fixForType(nonAnyType(target))
+	out := outNode.convert()
+	err := applyJSONValueToTarget(target, out)
+
+	return err
 }
 
 func nonAnyType(val any) reflect.Type {
@@ -274,7 +345,7 @@ func nonAnyType(val any) reflect.Type {
 }
 
 // target is either *T because it was
-func encodeMap(target any, m any) error {
+func applyJSONValueToTarget(target any, m any) error {
 	s := strings.Builder{}
 	err := json.NewEncoder(&s).Encode(m)
 	if err != nil {

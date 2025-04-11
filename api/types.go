@@ -218,12 +218,30 @@ type HasReference interface {
 type ContentType string
 
 const (
-	ContentTypeJSON ContentType = "application/json"
-	ContentTypeXML  ContentType = "application/xml"
-	ContentTypeText ContentType = "text/plain"
-	ContentTypeHTML ContentType = "text/html"
-	ContentTypeAny  ContentType = "*/*"
-	ContentTypeNone ContentType = ""
+	ContentTypeJSON     ContentType = "application/json"
+	ContentTypeXML      ContentType = "application/xml"
+	ContentTypeStream   ContentType = "application/octet-stream"
+	ContentTypeWord     ContentType = "application/msword"
+	ContentTypeGZIP     ContentType = "application/gzip"
+	ContentTypeZIP      ContentType = "application/zip"
+	ContentTypePower    ContentType = "application/vnd.ms-powerpoint"
+	ContentTypeExcel    ContentType = "application/vnd.ms-excel"
+	ContentTypeForm     ContentType = "application/x-www-form-urlencoded"
+	ContentTypeFormData ContentType = "multipart/form-data"
+	ContentTypeText     ContentType = "text/plain"
+	ContentTypeHTML     ContentType = "text/html"
+	ContentTypeCSV      ContentType = "text/csv"
+	ContentTypePNG      ContentType = "image/png"
+	ContentTypeGIF      ContentType = "image/gif"
+	ContentTypeBMP      ContentType = "image/bmp"
+	ContentTypeJPEG     ContentType = "image/jpeg"
+	ContentTypeSVG      ContentType = "image/svg+xml"
+	ContentTypeMP3      ContentType = "audio/mpeg"
+	ContentTypeWAV      ContentType = "audio/wav"
+	ContentTypeMP4      ContentType = "video/mp4"
+	ContentTypeMPEG     ContentType = "video/mpeg"
+	ContentTypeAny      ContentType = "*/*"
+	ContentTypeNone     ContentType = ""
 )
 
 // Schema data types
@@ -236,6 +254,7 @@ const (
 	DataTypeObject  DataType = "object"
 	DataTypeArray   DataType = "array"
 	DataTypeBoolean DataType = "boolean"
+	DataTypeFile    DataType = "file"
 	DataTypeNull    DataType = "null"
 )
 
@@ -349,6 +368,9 @@ type Schema struct {
 	Example *any `json:"example,omitempty"`
 	// Specifies that a schema is deprecated and SHOULD be transitioned out of usage. Default value is false.
 	Deprecated bool `json:"deprecated,omitempty"`
+
+	// Custom content type, used mostly for custom file formats.
+	FileType ContentType `json:"-"`
 }
 
 var _ HasReference = &Schema{}
@@ -402,6 +424,60 @@ func (s *Schema) GetPattern() *regexp.Regexp {
 		s.pattern, _ = regexp.Compile(s.Pattern)
 	}
 	return s.pattern
+}
+
+// Computes the Content-Type of the schema based on whether it contains a custom FileType, appears to contain files, or is a file.
+// Anything that contains a file will be multipart/form-data. If this Schema has a custom FileType then that will be returned, if
+// any child schema has a custom FileType then it will be considered multipart/form-data. If this schema is a string with a binary
+// format it's assumed to be a file.
+func (s Schema) ContentType() ContentType {
+	if s.FileType != ContentTypeNone {
+		return s.FileType
+	}
+	if (s.Type == DataTypeString && s.Format == "binary") || s.Type == DataTypeFile {
+		return ContentTypeStream
+	}
+
+	if s.Items != nil {
+		ct := s.Items.ContentType()
+		if ct != ContentTypeJSON {
+			return ContentTypeFormData
+		}
+	}
+
+	for _, prop := range s.Properties {
+		ct := prop.ContentType()
+		if ct != ContentTypeJSON {
+			return ContentTypeFormData
+		}
+	}
+
+	for _, oneOf := range s.OneOf {
+		ct := oneOf.ContentType()
+		if ct != ContentTypeJSON {
+			return ContentTypeFormData
+		}
+	}
+
+	for _, allOf := range s.AllOf {
+		ct := allOf.ContentType()
+		if ct != ContentTypeJSON {
+			return ContentTypeFormData
+		}
+	}
+
+	for _, anyOf := range s.AnyOf {
+		ct := anyOf.ContentType()
+		if ct != ContentTypeJSON {
+			return ContentTypeFormData
+		}
+	}
+
+	if s.referenced != nil {
+		return s.referenced.ContentType()
+	}
+
+	return ContentTypeJSON
 }
 
 // When request bodies or response payloads may be one of a number of different schemas, a discriminator object can be used to aid in serialization, deserialization, and validation. The discriminator is a specific object in a schema which is used to inform the consumer of the specification of an alternative schema based on the value associated with it.

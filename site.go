@@ -37,9 +37,12 @@ type Site struct {
 	url               string
 	baseOperation     api.Operation
 	openJsonPath      string
+	memoryLimit       int64
 }
 
 var _ Router = &Site{}
+
+var DEFAULT_MEMORY_LIMIT int64 = 10 << 20
 
 // Creates a new site given the base chi.Router.
 func New(router chi.Router) *Site {
@@ -52,6 +55,7 @@ func New(router chi.Router) *Site {
 		injectTypes:       make(map[reflect.Type]injectType),
 		validationOptions: make(map[reflect.Type]ValidationOptions),
 		router:            router,
+		memoryLimit:       DEFAULT_MEMORY_LIMIT,
 	}
 
 	site.Open.Document.OpenAPI = "3.0.0"
@@ -145,6 +149,18 @@ func (site *Site) addInjectTypes(it injectType, valuesOrTypes []any) {
 			site.injectTypes[typ] = it
 		}
 	}
+}
+
+// Sets the memory limit (in bytes) for multipart/form-data requests.
+// Any request larger than this will utilize temporary files.
+func (site *Site) SetMemoryLimit(memoryLimit int64) {
+	site.memoryLimit = memoryLimit
+}
+
+// Gets the memory limit (in bytes) for multipart/form-data requests.
+// Any request larger than this will utilize temporary files.
+func (site *Site) GetMemoryLimit() int64 {
+	return site.memoryLimit
 }
 
 // Adds the types of the given values as injectable request bodies. This avoids
@@ -361,7 +377,8 @@ func (site *Site) addInputType(op *api.Operation, inputType reflect.Type) bool {
 				if op.RequestBody.Content == nil {
 					op.RequestBody.Content = api.Contents{}
 				}
-				op.RequestBody.Content[api.ContentTypeJSON] = &api.MediaType{
+				contentType := bodySchema.ContentType()
+				op.RequestBody.Content[contentType] = &api.MediaType{
 					Schema:  bodySchema,
 					Example: api.GetExample(bodyType),
 				}
