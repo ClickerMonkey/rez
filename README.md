@@ -23,7 +23,7 @@ site.Get("/echo", func(q rez.Query[Echo]) (*Echo, *rez.NotFound[string]) {
   return &q.Value, nil
 })
 site.ServeSwaggerUI("/doc/swagger", nil)
-site.ServeRedoc("/doc/redoc")
+site.ServeRedoc("/doc/redoc", nil)
 site.Listen(":3000")
 ```
 More can be found in [examples](examples).
