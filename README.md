@@ -1,6 +1,8 @@
 # rez
 REST (easy) framework in Go with out of the box OpenAPI generation, validation, dependency injection, and much more. 
 
+> go get github.com/ClickerMonkey/rez
+
 - [Dependency Injection](#dependency-injection) How values are sent to middleware and endpoint functions.
 - [Router](#router) Defining the routes, middlware, & documentation.
 - [Middleware](#middleware) Code that runs before it reaches the final endpoint
